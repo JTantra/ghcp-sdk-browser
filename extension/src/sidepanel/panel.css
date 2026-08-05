@@ -1,0 +1,51 @@
+:root {
+  --bg:#0f1420; --panel:#161d2c; --line:#232c40; --txt:#e6ebf5;
+  --mut:#8794ad; --hi:#4da3ff; --ok:#3ecf8e; --bad:#ff5f56; --tool:#ffb020;
+}
+* { box-sizing:border-box; }
+body {
+  margin:0; background:var(--bg); color:var(--txt);
+  font:13px/1.55 ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif;
+  display:flex; flex-direction:column; height:100vh;
+}
+header {
+  padding:12px 14px; border-bottom:1px solid var(--line);
+  display:flex; justify-content:space-between; align-items:center;
+}
+.title { font-weight:600; font-size:14px; }
+.conn { display:flex; align-items:center; gap:6px; color:var(--mut); font-size:11px; }
+.dot { width:7px; height:7px; border-radius:99px; background:var(--bad); }
+.dot.on { background:var(--ok); }
+.setup { display:flex; gap:6px; padding:10px 14px; border-bottom:1px solid var(--line); }
+.setup input {
+  flex:1; background:var(--panel); border:1px solid var(--line);
+  color:var(--txt); padding:6px 9px; border-radius:6px; font-size:11px;
+}
+.quick { display:flex; gap:6px; padding:10px 14px 4px; flex-wrap:wrap; }
+.chip {
+  background:var(--panel); border:1px solid var(--line); color:var(--mut);
+  padding:5px 10px; border-radius:99px; font-size:11px; cursor:pointer;
+}
+.chip:hover { color:var(--txt); border-color:var(--hi); }
+.log { flex:1; overflow-y:auto; padding:12px 14px; display:flex; flex-direction:column; gap:9px; }
+.msg { padding:9px 11px; border-radius:9px; white-space:pre-wrap; word-break:break-word; }
+.msg.user { background:#1d3557; align-self:flex-end; max-width:88%; }
+.msg.bot  { background:var(--panel); border:1px solid var(--line); }
+.msg.tool {
+  background:transparent; border-left:2px solid var(--tool); border-radius:0;
+  color:var(--mut); font-size:11px; font-family:ui-monospace,monospace;
+  padding:3px 0 3px 9px;
+}
+.msg.err { background:#3a1a1a; border:1px solid var(--bad); color:#ffc9c6; }
+.cursor::after { content:"▋"; animation:b 1s steps(2) infinite; }
+@keyframes b { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+.composer { display:flex; gap:6px; padding:10px 14px; border-top:1px solid var(--line); }
+.composer textarea {
+  flex:1; background:var(--panel); border:1px solid var(--line); color:var(--txt);
+  padding:8px 10px; border-radius:7px; resize:none; font:inherit;
+}
+button {
+  background:var(--hi); border:0; color:#04122a; padding:8px 14px;
+  border-radius:7px; font-weight:600; cursor:pointer; font-size:12px;
+}
+button:disabled { opacity:.45; cursor:default; }

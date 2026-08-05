@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Fleet Ops Agent</title>
+<link rel="stylesheet" href="./panel.css"/>
+</head>
+<body>
+  <header>
+    <div class="title">Fleet Ops Agent</div>
+    <div class="conn"><span id="dot" class="dot"></span><span id="state">connecting…</span></div>
+  </header>
+
+  <div class="setup">
+    <input id="backend" placeholder="ws://127.0.0.1:8088/ws/agent"/>
+    <button id="connect">Connect</button>
+  </div>
+
+  <div class="quick">
+    <button class="chip" data-p="Review the shipment board and draft a recovery brief for the top 3 at-risk shipments.">Recovery brief</button>
+    <button class="chip" data-p="Read the shipment table and tell me how many shipments are delayed, at risk, and on time.">Board summary</button>
+    <button class="chip" data-p="Filter the board to Delayed only, then list the vessels and their delay hours.">Filter delayed</button>
+  </div>
+
+  <div id="log" class="log"></div>
+
+  <div class="composer">
+    <textarea id="input" rows="2" placeholder="Ask the agent…  (Enter to send, Shift+Enter for newline)"></textarea>
+    <button id="send">Send</button>
+  </div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

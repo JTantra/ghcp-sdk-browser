@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Fleet Ops Console</title>
+<style>
+  :root { --bg:#0f1420; --panel:#161d2c; --line:#232c40; --txt:#e6ebf5; --mut:#8794ad;
+          --hi:#4da3ff; --warn:#ffb020; --bad:#ff5f56; --ok:#3ecf8e; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font:14px/1.5 ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { padding:18px 26px; border-bottom:1px solid var(--line);
+           display:flex; align-items:center; gap:14px; }
+  h1 { font-size:17px; margin:0; letter-spacing:.2px; }
+  .badge { font-size:11px; color:var(--mut); border:1px solid var(--line);
+           padding:3px 9px; border-radius:99px; }
+  main { padding:26px; }
+  .bar { display:flex; gap:10px; margin-bottom:18px; align-items:center; }
+  input,select { background:var(--panel); border:1px solid var(--line); color:var(--txt);
+                 padding:8px 11px; border-radius:7px; font-size:13px; }
+  button { background:var(--hi); border:0; color:#04122a; padding:8px 15px;
+           border-radius:7px; font-weight:600; cursor:pointer; font-size:13px; }
+  table { width:100%; border-collapse:collapse; background:var(--panel);
+          border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  th,td { padding:11px 14px; text-align:left; border-bottom:1px solid var(--line); font-size:13px; }
+  th { color:var(--mut); font-weight:600; font-size:11px; text-transform:uppercase;
+       letter-spacing:.6px; background:#131a27; }
+  tr:last-child td { border-bottom:0; }
+  tr:hover td { background:#1a2233; }
+  .s-delayed { color:var(--bad); font-weight:600; }
+  .s-atrisk  { color:var(--warn); font-weight:600; }
+  .s-ontime  { color:var(--ok); font-weight:600; }
+  .detail { margin-top:20px; padding:16px; background:var(--panel);
+            border:1px solid var(--line); border-radius:10px; display:none; }
+  .detail.open { display:block; }
+  .detail h3 { margin:0 0 10px; font-size:14px; }
+  .kv { display:grid; grid-template-columns:150px 1fr; gap:7px 14px; font-size:13px; }
+  .kv div:nth-child(odd) { color:var(--mut); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fleet Ops Console</h1>
+  <span class="badge">NODE: SIN-01</span>
+  <span class="badge" id="clock"></span>
+</header>
+<main>
+  <div class="bar">
+    <input id="filter" placeholder="Filter by vessel or route…" style="width:280px"/>
+    <select id="status">
+      <option value="">All statuses</option>
+      <option value="Delayed">Delayed</option>
+      <option value="At Risk">At Risk</option>
+      <option value="On Time">On Time</option>
+    </select>
+    <button id="apply">Apply</button>
+    <span class="badge" id="count"></span>
+  </div>
+
+  <table id="shipments">
+    <thead>
+      <tr><th>Ref</th><th>Vessel</th><th>Route</th><th>ETA</th>
+          <th>Delay (h)</th><th>TEU</th><th>Status</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <div class="detail" id="detail">
+    <h3 id="d-title"></h3>
+    <div class="kv" id="d-body"></div>
+  </div>
+</main>
+
+<script>
+const DATA = [
+  ["SH-4417","MV Coral Spire","Singapore → Rotterdam","2026-08-11",34,8200,"Delayed","Typhoon Ambo rerouting; 2 port calls compressed"],
+  ["SH-4418","MV Iron Meridian","Busan → Long Beach","2026-08-07",0,6100,"On Time","Nominal"],
+  ["SH-4419","MV Baltic Anthem","Hamburg → Santos","2026-08-14",12,4700,"At Risk","Berth congestion at origin, 12h slip"],
+  ["SH-4420","MV Pacific Ember","Shanghai → Oakland","2026-08-09",41,9400,"Delayed","Crane outage; awaiting downstream slot"],
+  ["SH-4421","MV Aegean Dawn","Piraeus → Alexandria","2026-08-06",0,2200,"On Time","Nominal"],
+  ["SH-4422","MV Northern Kite","Vancouver → Yokohama","2026-08-12",7,5300,"At Risk","Weather window narrowing"],
+  ["SH-4423","MV Solent Trader","Felixstowe → New York","2026-08-10",26,7100,"Delayed","Labour action at origin terminal"],
+  ["SH-4424","MV Andaman Reach","Colombo → Jeddah","2026-08-08",3,3900,"On Time","Minor pilotage wait"],
+  ["SH-4425","MV Gulf Lantern","Jebel Ali → Mundra","2026-08-13",18,4100,"At Risk","Customs hold cleared late"],
+  ["SH-4426","MV Cascade Vow","Seattle → Kaohsiung","2026-08-15",0,6600,"On Time","Nominal"],
+];
+const tb = document.querySelector("#shipments tbody");
+function cls(s){ return s==="Delayed"?"s-delayed":s==="At Risk"?"s-atrisk":"s-ontime"; }
+function render(rows){
+  tb.innerHTML = rows.map(r=>`<tr data-ref="${r[0]}">
+    <td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td>
+    <td>${r[4]}</td><td>${r[5]}</td><td class="${cls(r[6])}">${r[6]}</td></tr>`).join("");
+  document.getElementById("count").textContent = rows.length + " shipments";
+  tb.querySelectorAll("tr").forEach(tr=>tr.onclick=()=>{
+    const r = DATA.find(x=>x[0]===tr.dataset.ref);
+    document.getElementById("d-title").textContent = r[0]+" · "+r[1];
+    document.getElementById("d-body").innerHTML =
+      `<div>Route</div><div>${r[2]}</div>
+       <div>ETA</div><div>${r[3]}</div>
+       <div>Delay (hours)</div><div>${r[4]}</div>
+       <div>TEU</div><div>${r[5]}</div>
+       <div>Status</div><div>${r[6]}</div>
+       <div>Operations note</div><div>${r[7]}</div>`;
+    document.getElementById("detail").classList.add("open");
+  });
+}
+function apply(){
+  const q=document.getElementById("filter").value.toLowerCase();
+  const s=document.getElementById("status").value;
+  render(DATA.filter(r=>(!q||r[1].toLowerCase().includes(q)||r[2].toLowerCase().includes(q))
+                     &&(!s||r[6]===s)));
+}
+document.getElementById("apply").onclick=apply;
+setInterval(()=>document.getElementById("clock").textContent=new Date().toUTCString().slice(17,25)+" UTC",1000);
+render(DATA);
+</script>
+</body>
+</html>

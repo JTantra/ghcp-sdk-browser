@@ -1,0 +1,26 @@
+# azd project for Foundry Hosted Agents.
+#   azd provision   -> Foundry project, model deployment, App Insights, ACR
+#   azd deploy      -> build image, push to ACR, roll out a new agent version
+name: ghcp-sdk-browser
+metadata:
+  template: ghcp-sdk-browser@0.1.0
+
+services:
+  agent:
+    project: .
+    language: docker
+    host: ai.agent
+    docker:
+      path: infra/Dockerfile
+      context: .
+    config:
+      protocol: invocations
+      protocolVersion: 2.0.0
+      # FOUNDRY_* are injected by the platform - never declare them here.
+      env:
+        GITHUB_TOKEN: ${GITHUB_TOKEN}
+        COPILOT_MODEL: ${COPILOT_MODEL}
+        OPS_MCP_URL: ${OPS_MCP_URL}
+      resources:
+        cpu: 2
+        memoryInGB: 4

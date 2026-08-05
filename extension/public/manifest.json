@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Fleet Ops Agent",
+  "version": "0.1.0",
+  "description": "Multi-agent browser automation over the operator's authenticated session.",
+  "permissions": ["scripting", "tabs", "activeTab", "sidePanel", "storage"],
+  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*", "https://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "side_panel": { "default_path": "src/sidepanel/index.html" },
+  "action": { "default_title": "Open Fleet Ops Agent" }
+}

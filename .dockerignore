@@ -1,0 +1,20 @@
+# Build context is the repo root (see azure.yaml). Keep it lean — without this,
+# server/.venv and extension/node_modules get uploaded to ACR on every build.
+.git
+.gitignore
+.azure
+
+# Python
+**/__pycache__/
+**/*.pyc
+server/.venv/
+
+# Node / extension — not part of the server image
+extension/
+node_modules/
+
+# Local-only assets
+demo-app/
+docs/
+*.md
+server/.env

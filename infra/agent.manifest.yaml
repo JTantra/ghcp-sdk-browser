@@ -1,0 +1,34 @@
+# Hosted agent manifest. Referenced by `azd ai agent init -m <this file>`.
+name: ghcp-sdk-browser
+displayName: Fleet Ops Agent
+description: >-
+  Master orchestrator with browser tools that drive the operator's authenticated
+  tab through a Chromium extension, delegating analysis to subagents that each
+  carry their own tools and skills.
+
+protocol: invocations
+protocolVersion: 2.0.0
+
+container:
+  dockerfile: Dockerfile
+  context: ..
+  port: 8088
+  readinessProbe: /readiness
+
+environment:
+  - name: GITHUB_TOKEN
+    required: true
+    secret: true
+    description: GitHub PAT with Copilot entitlement.
+  - name: COPILOT_MODEL
+    required: false
+    default: claude-sonnet-4.6
+  - name: OPS_MCP_URL
+    required: false
+    description: >-
+      Mock ops MCP server. Replace with a Foundry Toolbox consumer endpoint to
+      move tool governance into Foundry.
+
+observability:
+  openTelemetry: true
+  applicationInsights: true
