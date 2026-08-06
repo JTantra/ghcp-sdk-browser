@@ -16,11 +16,20 @@ header {
 .conn { display:flex; align-items:center; gap:6px; color:var(--mut); font-size:11px; }
 .dot { width:7px; height:7px; border-radius:99px; background:var(--bad); }
 .dot.on { background:var(--ok); }
-.setup { display:flex; gap:6px; padding:10px 14px; border-bottom:1px solid var(--line); }
+.setup { padding:10px 14px; border-bottom:1px solid var(--line); font-size:11px; }
+.setup summary { cursor:pointer; color:var(--mut); user-select:none; }
+.setup summary:hover { color:var(--txt); }
+.setup label { display:block; margin:8px 0 0; color:var(--mut); }
 .setup input {
-  flex:1; background:var(--panel); border:1px solid var(--line);
+  width:100%; margin-top:3px; background:var(--panel); border:1px solid var(--line);
   color:var(--txt); padding:6px 9px; border-radius:6px; font-size:11px;
 }
+.setup .row { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+.setup .row button { padding:6px 11px; font-size:11px; }
+button.ghost { background:transparent; border:1px solid var(--line); color:var(--mut); }
+button.ghost:hover { color:var(--txt); border-color:var(--hi); }
+.hint { margin-top:8px; color:var(--mut); font-size:11px; }
+.hint.ok { color:var(--ok); }
 .quick { display:flex; gap:6px; padding:10px 14px 4px; flex-wrap:wrap; }
 .chip {
   background:var(--panel); border:1px solid var(--line); color:var(--mut);

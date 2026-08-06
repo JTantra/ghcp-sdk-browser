@@ -1,10 +1,25 @@
 {
   "manifest_version": 3,
   "name": "Fleet Ops Agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Multi-agent browser automation over the operator's authenticated session.",
-  "permissions": ["scripting", "tabs", "activeTab", "sidePanel", "storage"],
-  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*", "https://*/*"],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2CoUxjuotH5aXYZqsIMiJvOiajJkZoQHXeRpsPPzXIJKAAbYIn27vqhOvL9JCqg7TYz2drGilPIAnvfSWUvkxqzNP7c9Us1VgDGDpto4eMKnJTVRDfvINRBnksbtHTeOo/k8rTTPorQC07OYLq7ia1tkn743c+Joip0RLtLs+MDLdyxfYjarGmqKwRib/7yXc4fCUTo3dPxYxkIgSB2V+3PU65aLWGCV08TgARgjThhUgr/lHoGX0aUmsFeyG08yMyJpkWyLuaHnsFYleJRvq6qf4DHWyoszJP9Qf3Yy4EWhv2xOqmsIVImS+08IFahnXuswqGLjlQ89RwP6UnrBFwIDAQAB",
+  "permissions": [
+    "scripting",
+    "tabs",
+    "activeTab",
+    "sidePanel",
+    "storage",
+    "identity",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://*.services.ai.azure.com/*",
+    "https://login.microsoftonline.com/*",
+    "https://*/*"
+  ],
   "background": { "service_worker": "background.js", "type": "module" },
   "side_panel": { "default_path": "src/sidepanel/index.html" },
   "action": { "default_title": "Open Fleet Ops Agent" }

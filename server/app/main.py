@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import uuid
 from collections.abc import AsyncIterator
 
@@ -120,8 +121,22 @@ async def debug_tool(request: Request) -> JSONResponse:
 
 
 async def ws_agent(websocket: WebSocket) -> None:
-    """The extension connects here and becomes the tool executor."""
-    session_id = websocket.query_params.get("session") or uuid.uuid4().hex
+    """The extension connects here and becomes the tool executor.
+
+    Route is ``/invocations_ws`` because that is the ONLY WebSocket path the
+    Foundry hosted-agent proxy will relay -- arbitrary paths are not routed.
+
+    Session resolution follows the platform contract: prefer the injected
+    ``FOUNDRY_AGENT_SESSION_ID``, else the ``agent_session_id`` query param
+    (the platform forwards unknown query params unchanged), else generate one.
+    The legacy ``session`` param is still accepted for local development.
+    """
+    session_id = (
+        os.getenv("FOUNDRY_AGENT_SESSION_ID")
+        or websocket.query_params.get("agent_session_id")
+        or websocket.query_params.get("session")
+        or uuid.uuid4().hex
+    )
     await websocket.accept()
     hub.attach(session_id, websocket)
     await websocket.send_text(json.dumps({"type": "connected", "session_id": session_id}))
@@ -176,6 +191,8 @@ app = Starlette(
         Route("/info", info, methods=["GET"]),
         Route("/invocations", invocations, methods=["POST"]),
         Route("/debug/tool", debug_tool, methods=["POST"]),
+        WebSocketRoute("/invocations_ws", ws_agent),
+        # Legacy local-dev alias; the hosted proxy only relays /invocations_ws.
         WebSocketRoute("/ws/agent", ws_agent),
     ],
     lifespan=lifespan,

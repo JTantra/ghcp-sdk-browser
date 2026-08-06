@@ -8,15 +8,30 @@
  * page from scripting another origin's DOM, and Playwright is a Node process
  * that cannot run inside a page. An extension is the only component that can
  * act inside the tab the operator is already authenticated in.
+ *
+ * Connecting to a Foundry hosted agent adds three constraints the local dev
+ * setup did not have:
+ *   1. The only WebSocket path the platform proxies is /invocations_ws.
+ *   2. The upgrade must carry an Entra bearer token on the Authorization
+ *      header, which the WebSocket API cannot set -- so we inject it with
+ *      declarativeNetRequest (rules.ts) after acquiring it (auth.ts).
+ *   3. Connections are capped at ~30 min (close 1001) and sessions idle out
+ *      after 15 min, so we reconnect with the SAME agent_session_id.
  */
 import { TOOLS } from "./tools";
+import { getAccessToken, signIn, signOut, isSignedIn } from "./auth";
+import { installAuthHeaderRule, clearAuthHeaderRule } from "./rules";
 import type { PanelMsg, ServerMsg } from "../shared/protocol";
 
-const DEFAULT_BACKEND = "ws://127.0.0.1:8088/ws/agent";
+const DEFAULT_BACKEND = "ws://127.0.0.1:8088/invocations_ws";
 
 let socket: WebSocket | null = null;
 let sessionId = "";
 let connected = false;
+/** Set while a deliberate teardown is in progress, to suppress auto-reconnect. */
+let closingIntentionally = false;
+let reconnectAttempts = 0;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 function toPanel(msg: PanelMsg): void {
   chrome.runtime.sendMessage(msg).catch(() => {
@@ -28,25 +43,82 @@ function newSessionId(): string {
   return crypto.randomUUID().replace(/-/g, "").slice(0, 24);
 }
 
-async function connect(backendUrl?: string): Promise<void> {
+/** Hosted endpoints are wss:// and need a bearer token; local dev does not. */
+function isHosted(url: string): boolean {
+  return url.startsWith("wss://");
+}
+
+/**
+ * Builds the connect URL. The platform reads `agent_session_id` from the query
+ * string and forwards unknown params unchanged, so one URL serves both hosted
+ * and local modes.
+ */
+function buildUrl(base: string, session: string): string {
+  const url = new URL(base);
+  if (isHosted(base)) {
+    if (!url.searchParams.has("api-version")) url.searchParams.set("api-version", "v1");
+    url.searchParams.set("agent_session_id", session);
+  } else {
+    url.searchParams.set("session", session);
+  }
+  return url.toString();
+}
+
+function scheduleReconnect(backendUrl: string): void {
+  if (closingIntentionally || reconnectTimer) return;
+
+  // Capped exponential backoff: 1s, 2s, 4s, 8s, 16s, then every 30s.
+  const delay = Math.min(1000 * 2 ** reconnectAttempts, 30_000);
+  reconnectAttempts += 1;
+  toPanel({ type: "activity", tool: "reconnect", detail: `retrying in ${delay / 1000}s` });
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    void connect(backendUrl);
+  }, delay);
+}
+
+export async function connect(backendUrl?: string): Promise<void> {
   if (socket && socket.readyState <= WebSocket.OPEN) return;
 
   const stored = await chrome.storage.local.get(["backendUrl", "sessionId"]);
   const url = backendUrl || stored.backendUrl || DEFAULT_BACKEND;
+  // Reusing the stored session id is what lets us resume the same hosted
+  // sandbox after the platform's 30-minute connection cap kicks us off.
   sessionId = stored.sessionId || newSessionId();
   await chrome.storage.local.set({ backendUrl: url, sessionId });
 
-  socket = new WebSocket(`${url}?session=${sessionId}`);
+  closingIntentionally = false;
+
+  if (isHosted(url)) {
+    try {
+      const token = await getAccessToken();
+      await installAuthHeaderRule(url, token);
+    } catch (err) {
+      toPanel({ type: "error", message: `auth failed: ${String(err)}` });
+      toPanel({ type: "status", connected: false, sessionId });
+      return; // No point dialing an endpoint that will 401.
+    }
+  }
+
+  socket = new WebSocket(buildUrl(url, sessionId));
 
   socket.onopen = () => {
     connected = true;
+    reconnectAttempts = 0;
     toPanel({ type: "status", connected: true, sessionId });
   };
 
-  socket.onclose = () => {
+  socket.onclose = (event) => {
     connected = false;
     socket = null;
     toPanel({ type: "status", connected: false, sessionId });
+
+    // 1001 = platform shutdown drain (the ~30 min cap). Expected; resume quietly.
+    if (event.code === 1001) {
+      toPanel({ type: "activity", tool: "session", detail: "platform recycled, resuming" });
+    }
+    if (!closingIntentionally) scheduleReconnect(url);
   };
 
   socket.onerror = () => {
@@ -59,6 +131,7 @@ async function connect(backendUrl?: string): Promise<void> {
     switch (msg.type) {
       case "connected":
         sessionId = msg.session_id;
+        await chrome.storage.local.set({ sessionId });
         toPanel({ type: "status", connected: true, sessionId });
         break;
 
@@ -108,10 +181,50 @@ async function connect(backendUrl?: string): Promise<void> {
   };
 }
 
+async function disconnect(): Promise<void> {
+  closingIntentionally = true;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  socket?.close(1000, "user disconnected");
+  socket = null;
+  connected = false;
+  await clearAuthHeaderRule();
+  toPanel({ type: "status", connected: false, sessionId });
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     if (msg.type === "connect") {
       await connect(msg.backendUrl);
+      sendResponse({ ok: true });
+    } else if (msg.type === "disconnect") {
+      await disconnect();
+      sendResponse({ ok: true });
+    } else if (msg.type === "sign_in") {
+      try {
+        await signIn();
+        sendResponse({ ok: true });
+      } catch (err) {
+        toPanel({ type: "error", message: `sign-in failed: ${String(err)}` });
+        sendResponse({ ok: false, error: String(err) });
+      }
+    } else if (msg.type === "sign_out") {
+      await signOut();
+      await clearAuthHeaderRule();
+      sendResponse({ ok: true });
+    } else if (msg.type === "save_config") {
+      await chrome.storage.local.set({
+        clientId: msg.clientId,
+        tenantId: msg.tenantId,
+        backendUrl: msg.backendUrl,
+      });
+      sendResponse({ ok: true });
+    } else if (msg.type === "new_session") {
+      // Abandons the hosted sandbox and starts a clean one.
+      await chrome.storage.local.set({ sessionId: newSessionId() });
+      await disconnect();
       sendResponse({ ok: true });
     } else if (msg.type === "prompt") {
       if (!connected || !socket) {
@@ -121,11 +234,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       sendResponse({ ok: true });
     } else if (msg.type === "get_status") {
-      const stored = await chrome.storage.local.get(["backendUrl"]);
+      const stored = await chrome.storage.local.get(["backendUrl", "clientId", "tenantId"]);
       sendResponse({
         connected,
         sessionId,
         backendUrl: stored.backendUrl || DEFAULT_BACKEND,
+        clientId: stored.clientId ?? "",
+        tenantId: stored.tenantId ?? "",
+        signedIn: await isSignedIn(),
       });
     }
   })();

@@ -11,10 +11,29 @@
     <div class="conn"><span id="dot" class="dot"></span><span id="state">connecting…</span></div>
   </header>
 
-  <div class="setup">
-    <input id="backend" placeholder="ws://127.0.0.1:8088/ws/agent"/>
-    <button id="connect">Connect</button>
-  </div>
+  <details class="setup" id="setupBox">
+    <summary>Endpoint &amp; sign-in</summary>
+    <label>Agent endpoint
+      <input id="backend" placeholder="wss://<account>.services.ai.azure.com/api/projects/<project>/agents/<agent>/endpoint/protocols/invocations_ws"/>
+    </label>
+    <label>Client ID
+      <input id="clientId" placeholder="Entra app (client) ID"/>
+    </label>
+    <label>Tenant ID
+      <input id="tenantId" placeholder="Directory (tenant) ID"/>
+    </label>
+    <div class="row">
+      <button id="save">Save</button>
+      <button id="signin">Sign in</button>
+      <button id="signout" class="ghost">Sign out</button>
+    </div>
+    <div class="row">
+      <button id="connect">Connect</button>
+      <button id="disconnect" class="ghost">Disconnect</button>
+      <button id="newsession" class="ghost">New session</button>
+    </div>
+    <div id="authstate" class="hint">not signed in</div>
+  </details>
 
   <div class="quick">
     <button class="chip" data-p="Review the shipment board and draft a recovery brief for the top 3 at-risk shipments.">Recovery brief</button>
