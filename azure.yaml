@@ -9,6 +9,8 @@ services:
         host: azure.ai.agent
         language: docker
         docker:
+            path: infra/Dockerfile
+            context: .
             remoteBuild: true
         uses:
             - jtantra-test-foundry
@@ -30,8 +32,6 @@ services:
         protocols:
             - protocol: invocations
               version: 1.0.0
-            # The extension drives the browser over this socket; it is the only
-            # WebSocket path the hosted-agent proxy relays.
             - protocol: invocations_ws
               version: 1.0.0
     jtantra-test-foundry:
