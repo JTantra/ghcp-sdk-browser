@@ -23,11 +23,6 @@ environment:
   - name: COPILOT_MODEL
     required: false
     default: claude-sonnet-5
-  - name: OPS_MCP_URL
-    required: false
-    description: >-
-      Mock ops MCP server. Replace with a Foundry Toolbox consumer endpoint to
-      move tool governance into Foundry.
 
 observability:
   openTelemetry: true

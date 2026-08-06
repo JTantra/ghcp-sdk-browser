@@ -25,8 +25,6 @@ services:
               value: ${GITHUB_TOKEN}
             - name: COPILOT_MODEL
               value: ${COPILOT_MODEL}
-            - name: OPS_MCP_URL
-              value: ${OPS_MCP_URL}
         kind: hosted
         name: ghcp-sdk-browser
         protocols:

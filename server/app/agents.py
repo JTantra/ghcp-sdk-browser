@@ -14,7 +14,7 @@ from typing import Any
 from copilot import CopilotClient
 
 from .browser_tools import bind_session, browser_tools
-from .config import COPILOT_MODEL, GITHUB_TOKEN, OPS_MCP_URL, SKILLS_DIR
+from .config import COPILOT_MODEL, GITHUB_TOKEN, SKILLS_DIR
 from .hub import hub
 from .ops_tools import ops_tools
 from .telemetry import tracer
@@ -138,17 +138,20 @@ class AgentRunner:
                 streaming=True,
                 enable_skills=True,
                 skill_directories=[str(SKILLS_DIR)],
+                # ops_tools() are in-process (see ops_tools.py) and ship inside
+                # this container, so no MCP server is needed or contacted.
+                # A stale mcp_servers entry pointing at an unreachable URL is
+                # tolerated by the SDK but adds ~1s of connect retries to the
+                # first session, so it is deliberately absent.
                 tools=browser_tools() + ops_tools(),
                 custom_agents=CUSTOM_AGENTS,
                 default_agent={"excluded_tools": MASTER_EXCLUDED},
-                mcp_servers={"ops": {"type": "http", "url": OPS_MCP_URL}},
             )
-            bind_session(session.id, relay_session)
+            bind_session(relay_session, relay_session)
             self._sessions[relay_session] = session
             log.info(
-                "session created relay=%s copilot=%s subagents=%d",
+                "session created relay=%s subagents=%d",
                 relay_session,
-                session.id,
                 len(CUSTOM_AGENTS),
             )
             return session
