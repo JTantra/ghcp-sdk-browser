@@ -20,6 +20,10 @@ class Hub:
     def __init__(self) -> None:
         self._sockets: dict[str, Any] = {}
         self._pending: dict[str, asyncio.Future] = {}
+        #: call_id -> session_id, so a detach only cancels its OWN session's
+        #: in-flight calls. Without this, one operator disconnecting would
+        #: fail every other operator's pending tool call.
+        self._call_session: dict[str, str] = {}
         self._activity: dict[str, list[dict]] = {}
 
     # -- socket lifecycle -------------------------------------------------
@@ -29,9 +33,16 @@ class Hub:
         log.info("browser attached session=%s", session_id)
 
     def detach(self, session_id: str) -> None:
-        self._sockets.pop(session_id, None)
+        sock = self._sockets.pop(session_id, None)
+        # SSE sinks need an explicit close to unblock their reader; WebSockets
+        # are torn down by Starlette. `close_sync` marks the former -- checking
+        # for a plain `close` would find the WebSocket's *coroutine* method and
+        # call it without awaiting.
+        close = getattr(sock, "close_sync", None)
+        if callable(close):
+            close()
         for cid, fut in list(self._pending.items()):
-            if not fut.done():
+            if self._call_session.get(cid) == session_id and not fut.done():
                 fut.set_result({"call_id": cid, "output": '{"error":"browser disconnected"}'})
         log.info("browser detached session=%s", session_id)
 
@@ -53,6 +64,7 @@ class Hub:
         call_id = uuid.uuid4().hex
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[call_id] = fut
+        self._call_session[call_id] = session_id
 
         await ws.send_text(
             json.dumps(
@@ -73,6 +85,7 @@ class Hub:
             return json.dumps({"error": f"browser timed out after {BROWSER_TOOL_TIMEOUT_S}s"})
         finally:
             self._pending.pop(call_id, None)
+            self._call_session.pop(call_id, None)
 
     # -- inbound ----------------------------------------------------------
     def resolve_tool(self, msg: dict) -> None:

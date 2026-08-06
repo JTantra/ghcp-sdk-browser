@@ -11,6 +11,7 @@ the tool executor; this server only reasons.
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -21,13 +22,14 @@ from collections.abc import AsyncIterator
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from .agents import CUSTOM_AGENTS, runner
 from .config import PORT
 from .hub import hub
+from .sse import SSE_HEADERS, SseSink, probe_stream
 from .telemetry import setup_tracing, tracer
 
 logging.basicConfig(
@@ -62,15 +64,44 @@ async def info(_request: Request) -> JSONResponse:
     )
 
 
-async def invocations(request: Request) -> JSONResponse:
-    """Foundry Invocations protocol.
+async def invocations(request: Request):
+    """Foundry Invocations protocol -- and the extension's whole transport.
 
     Session binding is by the ``agent_session_id`` QUERY parameter -- the
     platform reads it only from the query string. We reuse it as the relay
     session so the hosted sandbox and the operator's browser stay paired.
+
+    ``/invocations`` is the only POST path the platform relays, so the
+    extension multiplexes over it with a ``mode`` field in the body:
+
+        mode=attach       -> long-lived SSE stream (the tool_call channel)
+        mode=tool_result  -> resolves a pending tool call
+        mode=prompt       -> starts a turn, output arrives on the SSE stream
+        mode=probe        -> streaming-vs-buffering diagnostic
+        (absent)          -> classic request/response, unchanged
+
+    Why not WebSocket: the upgrade needs an Authorization header, which the
+    browser WebSocket API cannot set. ``fetch()`` can, so SSE needs no
+    declarativeNetRequest and no extra permission. See sse.py.
     """
     session_id = request.query_params.get("agent_session_id") or uuid.uuid4().hex
     body = await request.json()
+    mode = body.get("mode")
+
+    if mode == "probe":
+        # Deliberately not session-bound: answers one question, costs nothing.
+        return StreamingResponse(probe_stream(), headers=SSE_HEADERS)
+
+    if mode == "attach":
+        return await attach_sse(session_id)
+
+    if mode == "tool_result":
+        hub.resolve_tool(body)
+        return JSONResponse({"ok": True}, headers={"agent_session_id": session_id})
+
+    if mode == "prompt":
+        return await start_turn(session_id, body.get("text", ""))
+
     prompt = body.get("message") or body.get("input") or ""
 
     if not prompt:
@@ -95,6 +126,58 @@ async def invocations(request: Request) -> JSONResponse:
         {"session_id": session_id, "output": answer, "activity": hub.activity(session_id)},
         headers={"agent_session_id": session_id},
     )
+
+
+async def attach_sse(session_id: str) -> StreamingResponse:
+    """Open the operator browser's long-lived tool-call channel.
+
+    Registering the sink under ``hub.attach`` is what flips ``is_connected``,
+    so the rest of the codebase cannot tell this is not a WebSocket.
+    """
+    sink = SseSink(session_id)
+    hub.attach(session_id, sink)
+
+    async def body():
+        try:
+            async for chunk in sink.stream():
+                yield chunk
+        finally:
+            # Fires when the client disconnects, so a closed side panel does
+            # not leave the session looking permanently attached.
+            hub.detach(session_id)
+
+    return StreamingResponse(
+        body(), headers={**SSE_HEADERS, "agent_session_id": session_id}
+    )
+
+
+async def start_turn(session_id: str, text: str) -> JSONResponse:
+    """Kick off a turn; its output flows out over the attached SSE stream.
+
+    This returns immediately rather than awaiting the turn. A turn blocks on
+    browser tool calls, and those results arrive as *separate POSTs* -- so
+    holding this request open would deadlock the client if it serialised
+    requests.
+    """
+    if not hub.is_connected(session_id):
+        return JSONResponse(
+            {"error": "no operator browser attached for this session", "session_id": session_id},
+            status_code=409,
+        )
+    if not text:
+        return JSONResponse({"error": "no 'text' in body"}, status_code=400)
+
+    async def run() -> None:
+        await hub.send(session_id, {"type": "turn_started"})
+        try:
+            answer = await runner.ask(session_id, text)
+            await hub.send(session_id, {"type": "turn_finished", "text": answer})
+        except Exception as exc:  # noqa: BLE001 - surface to the UI
+            log.exception("turn failed")
+            await hub.send(session_id, {"type": "error", "message": str(exc)})
+
+    asyncio.create_task(run())
+    return JSONResponse({"ok": True, "session_id": session_id}, status_code=202)
 
 
 async def debug_tool(request: Request) -> JSONResponse:
