@@ -91,6 +91,13 @@ $("disconnect").onclick = () => {
   chrome.runtime.sendMessage({ type: "disconnect" });
 };
 
+let localBackendUrl = "ws://127.0.0.1:8088/invocations_ws";
+
+$("uselocal").onclick = () => {
+  backend.value = localBackendUrl;
+  add("tool", "endpoint set to local - press Save then Connect");
+};
+
 $("newsession").onclick = () => {
   chrome.runtime.sendMessage({ type: "new_session" }, () => {
     add("tool", "started a new session - press Connect");
@@ -146,14 +153,16 @@ chrome.runtime.onMessage.addListener((msg: PanelMsg) => {
 chrome.runtime.sendMessage({ type: "get_status" }, (res) => {
   if (!res) return;
   backend.value = res.backendUrl;
+  if (res.localBackend) localBackendUrl = res.localBackend;
   clientId.value = res.clientId ?? "";
   tenantId.value = res.tenantId ?? "";
   dot.classList.toggle("on", res.connected);
   state.textContent = res.connected ? `session ${res.sessionId.slice(0, 8)}` : "disconnected";
   setAuthState(!!res.signedIn);
 
-  // Nudge the operator toward setup when the extension is not usable yet.
-  if (!res.clientId || !res.tenantId || !res.signedIn) {
+  // Only the sign-in step is left to the operator now that endpoint, client
+  // and tenant are pre-filled -- so open setup only when not signed in.
+  if (!res.signedIn) {
     setupBox.open = true;
   } else if (!res.connected) {
     chrome.runtime.sendMessage({ type: "connect" });

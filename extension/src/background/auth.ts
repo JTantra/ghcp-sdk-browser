@@ -47,10 +47,18 @@ async function makePkcePair(): Promise<{ verifier: string; challenge: string }> 
   return { verifier, challenge: base64UrlEncode(digest) };
 }
 
-export async function getAuthConfig(): Promise<AuthConfig | null> {
+/** Entra app registration `ghcp-sdk-browser-extension` in the sandbox tenant. */
+const DEFAULT_CLIENT_ID = "509df672-ebb9-4ab5-91d6-5c19996313c1";
+const DEFAULT_TENANT_ID = "92def590-0f4c-43ab-be1e-493d616e2725";
+
+export async function getAuthConfig(): Promise<AuthConfig> {
   const s = await chrome.storage.local.get(["clientId", "tenantId"]);
-  if (!s.clientId || !s.tenantId) return null;
-  return { clientId: s.clientId, tenantId: s.tenantId };
+  // Saved values win; otherwise fall back to the deployed registration so
+  // sign-in works on a fresh install without touching the setup panel.
+  return {
+    clientId: s.clientId || DEFAULT_CLIENT_ID,
+    tenantId: s.tenantId || DEFAULT_TENANT_ID,
+  };
 }
 
 async function loadCached(): Promise<TokenSet | null> {
@@ -94,7 +102,6 @@ async function redeem(cfg: AuthConfig, body: Record<string, string>): Promise<To
 /** Full interactive sign-in. Opens the Entra consent/login window. */
 export async function signIn(): Promise<string> {
   const cfg = await getAuthConfig();
-  if (!cfg) throw new Error("set the Client ID and Tenant ID in the side panel first");
 
   const { verifier, challenge } = await makePkcePair();
   const redirectUri = chrome.identity.getRedirectURL();
@@ -149,7 +156,6 @@ export async function getAccessToken(): Promise<string> {
     if (tokens && tokens.expiresAt > Date.now()) return tokens.accessToken;
 
     const cfg = await getAuthConfig();
-    if (!cfg) throw new Error("not configured - set Client ID and Tenant ID");
 
     if (tokens?.refreshToken) {
       try {

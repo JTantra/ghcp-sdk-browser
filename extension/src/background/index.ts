@@ -23,7 +23,19 @@ import { getAccessToken, signIn, signOut, isSignedIn } from "./auth";
 import { installAuthHeaderRule, clearAuthHeaderRule } from "./rules";
 import type { PanelMsg, ServerMsg } from "../shared/protocol";
 
-const DEFAULT_BACKEND = "ws://127.0.0.1:8088/invocations_ws";
+/**
+ * Deployed defaults. Pre-filled so the panel works out of the box; every one
+ * is still overridable from the side panel and whatever the operator saves in
+ * chrome.storage.local wins over these.
+ */
+const DEFAULT_BACKEND =
+  "wss://jtantra-test-foundry.services.ai.azure.com/api/projects/jtantra-test-foundry" +
+  "/agents/ghcp-sdk-browser/endpoint/protocols/invocations_ws?api-version=v1";
+/** Entra app registration `ghcp-sdk-browser-extension`. */
+const DEFAULT_CLIENT_ID = "509df672-ebb9-4ab5-91d6-5c19996313c1";
+const DEFAULT_TENANT_ID = "92def590-0f4c-43ab-be1e-493d616e2725";
+/** Local dev fallback: `python -m app.main` then paste this into the panel. */
+const LOCAL_BACKEND = "ws://127.0.0.1:8088/invocations_ws";
 
 let socket: WebSocket | null = null;
 let sessionId = "";
@@ -239,8 +251,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         connected,
         sessionId,
         backendUrl: stored.backendUrl || DEFAULT_BACKEND,
-        clientId: stored.clientId ?? "",
-        tenantId: stored.tenantId ?? "",
+        clientId: stored.clientId || DEFAULT_CLIENT_ID,
+        tenantId: stored.tenantId || DEFAULT_TENANT_ID,
+        localBackend: LOCAL_BACKEND,
         signedIn: await isSignedIn(),
       });
     }

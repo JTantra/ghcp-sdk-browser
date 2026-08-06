@@ -14,13 +14,13 @@
   <details class="setup" id="setupBox">
     <summary>Endpoint &amp; sign-in</summary>
     <label>Agent endpoint
-      <input id="backend" placeholder="wss://<account>.services.ai.azure.com/api/projects/<project>/agents/<agent>/endpoint/protocols/invocations_ws"/>
+      <input id="backend" spellcheck="false" placeholder="wss://…/protocols/invocations_ws"/>
     </label>
     <label>Client ID
-      <input id="clientId" placeholder="Entra app (client) ID"/>
+      <input id="clientId" spellcheck="false" placeholder="Entra app (client) ID"/>
     </label>
     <label>Tenant ID
-      <input id="tenantId" placeholder="Directory (tenant) ID"/>
+      <input id="tenantId" spellcheck="false" placeholder="Directory (tenant) ID"/>
     </label>
     <div class="row">
       <button id="save">Save</button>
@@ -31,6 +31,7 @@
       <button id="connect">Connect</button>
       <button id="disconnect" class="ghost">Disconnect</button>
       <button id="newsession" class="ghost">New session</button>
+      <button id="uselocal" class="ghost" title="Point at a locally running server">Use local</button>
     </div>
     <div id="authstate" class="hint">not signed in</div>
   </details>
