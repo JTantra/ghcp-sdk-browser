@@ -20,7 +20,7 @@
  */
 import { TOOLS } from "./tools";
 import { getAccessToken, signIn, signOut, isSignedIn } from "./auth";
-import { installAuthHeaderRule, clearAuthHeaderRule } from "./rules";
+import { installAuthHeaderRule, clearAuthHeaderRule, diagnoseAuthRule } from "./rules";
 import type { PanelMsg, ServerMsg } from "../shared/protocol";
 
 /**
@@ -116,6 +116,11 @@ export async function connect(backendUrl?: string): Promise<void> {
     try {
       const token = await getAccessToken();
       await installAuthHeaderRule(url, token);
+      // Surface silent misconfiguration (missing rule / missing host
+      // permission) up front -- otherwise it only ever shows as a bare 401.
+      for (const note of await diagnoseAuthRule(url)) {
+        toPanel({ type: "activity", tool: "auth", detail: note });
+      }
     } catch (err) {
       toPanel({ type: "error", message: `auth failed: ${String(err)}` });
       toPanel({ type: "status", connected: false, sessionId });

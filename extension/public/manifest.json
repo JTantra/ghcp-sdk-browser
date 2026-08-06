@@ -11,12 +11,16 @@
     "sidePanel",
     "storage",
     "identity",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback"
   ],
   "host_permissions": [
     "http://localhost/*",
     "http://127.0.0.1/*",
+    "ws://localhost/*",
+    "ws://127.0.0.1/*",
     "https://*.services.ai.azure.com/*",
+    "wss://*.services.ai.azure.com/*",
     "https://login.microsoftonline.com/*",
     "https://*/*"
   ],
