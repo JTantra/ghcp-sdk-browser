@@ -61,17 +61,23 @@ function isHosted(url: string): boolean {
 }
 
 /**
- * Builds the connect URL. The platform reads `agent_session_id` from the query
- * string and forwards unknown params unchanged, so one URL serves both hosted
- * and local modes.
+ * Builds the connect URL.
+ *
+ * IMPORTANT (hosted): `agent_session_id` must be a PLATFORM-ISSUED id, not one
+ * we invent. The platform validates it and rejects unknown values with
+ * HTTP 400 `invalid_session_id`. So we omit it on the first connect, let the
+ * platform mint one, and reuse the id it hands back in the `connected` frame.
+ * Local dev has no such validation, so it keeps the client-generated id.
  */
 function buildUrl(base: string, session: string): string {
   const url = new URL(base);
   if (isHosted(base)) {
     if (!url.searchParams.has("api-version")) url.searchParams.set("api-version", "v1");
-    url.searchParams.set("agent_session_id", session);
+    // Only send it back if the platform issued it on an earlier connect.
+    if (session) url.searchParams.set("agent_session_id", session);
+    else url.searchParams.delete("agent_session_id");
   } else {
-    url.searchParams.set("session", session);
+    url.searchParams.set("session", session || newSessionId());
   }
   return url.toString();
 }
@@ -95,10 +101,14 @@ export async function connect(backendUrl?: string): Promise<void> {
 
   const stored = await chrome.storage.local.get(["backendUrl", "sessionId"]);
   const url = backendUrl || stored.backendUrl || DEFAULT_BACKEND;
-  // Reusing the stored session id is what lets us resume the same hosted
-  // sandbox after the platform's 30-minute connection cap kicks us off.
-  sessionId = stored.sessionId || newSessionId();
-  await chrome.storage.local.set({ backendUrl: url, sessionId });
+
+  // Hosted: never invent a session id -- the platform validates it and 400s on
+  // anything it did not issue. Start empty and adopt the id from the `connected`
+  // frame, which is what lets us resume the same sandbox after the ~30 min cap.
+  // Local: a client-generated id is fine and keeps dev sessions stable.
+  sessionId = stored.sessionId || (isHosted(url) ? "" : newSessionId());
+  await chrome.storage.local.set({ backendUrl: url });
+  if (sessionId) await chrome.storage.local.set({ sessionId });
 
   closingIntentionally = false;
 
@@ -115,8 +125,13 @@ export async function connect(backendUrl?: string): Promise<void> {
 
   socket = new WebSocket(buildUrl(url, sessionId));
 
+  // Distinguishes "never reached the server" from "was connected and dropped",
+  // so we only discard a session id that the platform actually refused.
+  let connectedOnce = false;
+
   socket.onopen = () => {
     connected = true;
+    connectedOnce = true;
     reconnectAttempts = 0;
     toPanel({ type: "status", connected: true, sessionId });
   };
@@ -130,6 +145,21 @@ export async function connect(backendUrl?: string): Promise<void> {
     if (event.code === 1001) {
       toPanel({ type: "activity", tool: "session", detail: "platform recycled, resuming" });
     }
+
+    // A stored session id the platform no longer accepts (expired past the
+    // 30-day life, or issued to another identity) makes every retry 400 with
+    // the same result. Drop it once so the next attempt gets a fresh sandbox
+    // instead of looping forever.
+    if (isHosted(url) && !connectedOnce && sessionId) {
+      toPanel({
+        type: "activity",
+        tool: "session",
+        detail: "session rejected, requesting a new one",
+      });
+      sessionId = "";
+      void chrome.storage.local.remove("sessionId");
+    }
+
     if (!closingIntentionally) scheduleReconnect(url);
   };
 
@@ -234,8 +264,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       });
       sendResponse({ ok: true });
     } else if (msg.type === "new_session") {
-      // Abandons the hosted sandbox and starts a clean one.
-      await chrome.storage.local.set({ sessionId: newSessionId() });
+      // Abandons the current sandbox. Clearing the id (rather than minting one)
+      // is what makes the next hosted connect ask the platform for a new
+      // session; local mode regenerates on connect.
+      await chrome.storage.local.remove("sessionId");
+      sessionId = "";
       await disconnect();
       sendResponse({ ok: true });
     } else if (msg.type === "prompt") {
