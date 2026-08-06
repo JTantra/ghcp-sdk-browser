@@ -12,7 +12,7 @@ azd auth login
 
 # Requires the Foundry Project Manager role on the target project.
 azd env set GITHUB_TOKEN "$GITHUB_TOKEN"
-azd env set COPILOT_MODEL "${COPILOT_MODEL:-claude-sonnet-4.6}"
+azd env set COPILOT_MODEL "${COPILOT_MODEL:-claude-sonnet-5}"
 
 azd provision
 azd deploy

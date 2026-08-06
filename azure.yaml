@@ -13,6 +13,8 @@ services:
     docker:
       path: infra/Dockerfile
       context: .
+      # Host runs linux/amd64; this dev box is aarch64. Cross-build via QEMU.
+      platform: linux/amd64
     config:
       protocol: invocations
       protocolVersion: 2.0.0

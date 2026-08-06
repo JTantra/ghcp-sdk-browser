@@ -55,7 +55,7 @@ CUSTOM_AGENTS: list[dict[str, Any]] = [
         ),
         "skills": ["risk-scoring"],
         "tools": [],
-        "model": "claude-sonnet-4.6",
+        "model": "claude-sonnet-5",
     },
     {
         "name": "recovery-planner",
@@ -71,7 +71,7 @@ CUSTOM_AGENTS: list[dict[str, Any]] = [
         ),
         "skills": ["recovery-playbook"],
         "tools": ["ops_node_capacity", "ops_carrier_policy"],
-        "model": "claude-sonnet-4.6",
+        "model": "claude-sonnet-5",
     },
     {
         "name": "reporter",

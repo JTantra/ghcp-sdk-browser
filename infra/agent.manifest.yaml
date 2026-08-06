@@ -22,7 +22,7 @@ environment:
     description: GitHub PAT with Copilot entitlement.
   - name: COPILOT_MODEL
     required: false
-    default: claude-sonnet-4.6
+    default: claude-sonnet-5
   - name: OPS_MCP_URL
     required: false
     description: >-
