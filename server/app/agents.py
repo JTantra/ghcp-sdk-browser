@@ -170,39 +170,59 @@ class AgentRunner:
 
         chunks: list[str] = []
         done = asyncio.Event()
+        loop = asyncio.get_running_loop()
 
-        async def on_delta(event: Any) -> None:
-            text = _delta_text(event)
-            if text:
-                chunks.append(text)
-                await hub.send(relay_session, {"type": "assistant_delta", "text": text})
+        def dispatch(event: Any) -> None:
+            """Single sync handler for every session event.
 
-        async def on_message(event: Any) -> None:
-            text = _message_text(event)
-            if text:
-                await hub.send(relay_session, {"type": "assistant_message", "text": text})
+            The SDK's ``on()`` takes ONE handler and dispatches by
+            ``event.type`` -- there is no per-event-name subscription. It also
+            calls handlers synchronously, so this must not be a coroutine
+            (an async handler is never awaited and silently does nothing).
+            Anything async is therefore scheduled back onto the loop.
+            """
+            etype = getattr(event.type, "value", str(event.type))
 
-        async def on_idle(_event: Any) -> None:
-            done.set()
+            if etype == "assistant.message_delta":
+                text = _delta_text(event)
+                if text:
+                    chunks.append(text)
+                    loop.create_task(
+                        hub.send(relay_session, {"type": "assistant_delta", "text": text})
+                    )
 
-        async def on_error(event: Any) -> None:
-            await hub.send(
-                relay_session, {"type": "error", "message": str(getattr(event, "data", event))}
-            )
-            done.set()
+            elif etype == "assistant.message":
+                text = _message_text(event)
+                if text:
+                    loop.create_task(
+                        hub.send(relay_session, {"type": "assistant_message", "text": text})
+                    )
 
-        session.on("assistant.message_delta", on_delta)
-        session.on("assistant.message", on_message)
-        session.on("session.idle", on_idle)
-        session.on("session.error", on_error)
+            elif etype == "session.idle":
+                loop.call_soon_threadsafe(done.set)
 
-        with tracer().start_as_current_span("agent.turn") as span:
-            span.set_attribute("session.relay", relay_session)
-            span.set_attribute("prompt.chars", len(prompt))
-            await session.send(prompt=prompt)
-            await done.wait()
-            answer = "".join(chunks).strip()
-            span.set_attribute("answer.chars", len(answer))
+            elif etype == "session.error":
+                loop.create_task(
+                    hub.send(
+                        relay_session,
+                        {"type": "error", "message": str(getattr(event, "data", event))},
+                    )
+                )
+                loop.call_soon_threadsafe(done.set)
+
+        unsubscribe = session.on(dispatch)
+
+        try:
+            with tracer().start_as_current_span("agent.turn") as span:
+                span.set_attribute("session.relay", relay_session)
+                span.set_attribute("prompt.chars", len(prompt))
+                await session.send(prompt=prompt)
+                await done.wait()
+                answer = "".join(chunks).strip()
+                span.set_attribute("answer.chars", len(answer))
+        finally:
+            # Without this, every turn stacks another handler on the session.
+            unsubscribe()
         return answer
 
 
