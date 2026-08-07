@@ -154,11 +154,19 @@ class AgentRunner:
                 custom_agents=CUSTOM_AGENTS,
                 default_agent={"excluded_tools": MASTER_EXCLUDED},
             )
-            bind_session(relay_session, relay_session)
+            # The tool handlers receive inv.session_id -- the COPILOT session
+            # id -- and map it back to the relay session to find the right
+            # browser. Binding relay->relay never matched, so every tool call
+            # fell through to the raw copilot id and found no attached browser.
+            copilot_sid = str(
+                getattr(session, "session_id", None) or getattr(session, "id", relay_session)
+            )
+            bind_session(copilot_sid, relay_session)
             self._sessions[relay_session] = session
             log.info(
-                "session created relay=%s subagents=%d",
+                "session created relay=%s copilot=%s subagents=%d",
                 relay_session,
+                copilot_sid,
                 len(CUSTOM_AGENTS),
             )
             return session

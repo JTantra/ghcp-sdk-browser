@@ -1,0 +1,22 @@
+2026-08-07T03:36:54.650Z [INFO] Starting CLI in server mode (stdio)
+2026-08-07T03:36:54.657Z [INFO] Starting CLI in stdio mode (Rust JSON-RPC engine)
+2026-08-07T03:36:54.659Z [INFO] Shell completions: no writable completion directory found for bash, skipping
+2026-08-07T03:36:54.660Z [INFO] CLI server ready (stdio mode, Rust JSON-RPC engine)
+2026-08-07T03:36:54.661Z [INFO] Server started, waiting for requests
+2026-08-07T03:37:02.857Z [INFO] Workspace initialized: d490c284-30ad-48ba-94fc-6f60eb413d12 (checkpoints: 0)
+2026-08-07T03:37:02.877Z [INFO] Created session: d490c284-30ad-48ba-94fc-6f60eb413d12
+2026-08-07T03:37:02.917Z [INFO]  
+2026-08-07T03:37:02.917Z [INFO] --- Start of group: configured settings: ---
+2026-08-07T03:37:02.917Z [INFO] --- End of group ---
+2026-08-07T03:37:03.025Z [INFO] --- Start of group: Completion request configuration:  ---
+2026-08-07T03:37:03.027Z [INFO] --- End of group ---
+2026-08-07T03:37:03.042Z [INFO]  
+2026-08-07T03:37:03.042Z [INFO] --- Start of group: configured settings: ---
+2026-08-07T03:37:03.042Z [INFO] --- End of group ---
+2026-08-07T03:37:14.813Z [INFO] Shutting down: stdin closed
+2026-08-07T03:37:14.814Z [INFO] Starting graceful shutdown of CLI server
+2026-08-07T03:37:14.814Z [INFO] Destroying 1 active sessions
+2026-08-07T03:37:14.815Z [INFO] Closing session d490c284-30ad-48ba-94fc-6f60eb413d12
+2026-08-07T03:37:14.837Z [ERROR] Failed to shut down shell processes: Error: unknown taskRegistry handle 1
+2026-08-07T03:37:14.838Z [INFO] Rust JSON-RPC engine stopped successfully
+2026-08-07T03:37:14.838Z [INFO] CLI server stopped successfully
