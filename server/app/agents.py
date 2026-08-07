@@ -14,7 +14,7 @@ from typing import Any
 from copilot import CopilotClient
 
 from .browser_tools import bind_session, browser_tools
-from .config import COPILOT_MODEL, GITHUB_TOKEN, SKILLS_DIR
+from .config import COPILOT_HOME, COPILOT_MODEL, GITHUB_TOKEN, SKILLS_DIR
 from .hub import hub
 from .ops_tools import ops_tools
 from .telemetry import tracer
@@ -112,6 +112,13 @@ class AgentRunner:
             github_token=GITHUB_TOKEN,
             use_logged_in_user=False,
             log_level="info",
+            # The platform sets HOME=/home/session, a mount this container's
+            # user cannot write to, so the SDK's default of $HOME fails with
+            # EACCES on the first turn. base_directory becomes COPILOT_HOME
+            # for the spawned Node CLI, pointing its session state somewhere
+            # we own. (XDG_CACHE_HOME in the Dockerfile covers the separate
+            # CLI *download* cache -- both are needed.)
+            base_directory=COPILOT_HOME,
         )
         await self._client.start()
         log.info("copilot client started")

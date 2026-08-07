@@ -9,6 +9,11 @@ SKILLS_DIR = SERVER_DIR / "skills"
 
 PORT = int(os.getenv("PORT", "8088"))
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+#: Where the Copilot SDK keeps session state. The hosted platform sets
+#: HOME=/home/session, a mount the container user cannot write to, so leaving
+#: the SDK on its $HOME default fails with EACCES on the first turn. Defaults
+#: to a directory the image creates and owns; override for local runs.
+COPILOT_HOME = os.getenv("COPILOT_HOME", str(SERVER_DIR / ".copilot"))
 COPILOT_MODEL = os.getenv("COPILOT_MODEL", "claude-sonnet-5")
 
 # Foundry injects these in the hosted container.
