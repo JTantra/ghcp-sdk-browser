@@ -8,8 +8,10 @@ must delegate rather than doing the work itself.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+from datetime import timedelta
 from typing import Any
 
 from copilot import CopilotClient
@@ -249,6 +251,19 @@ class AgentRunner:
             span.end()
 
         def dispatch(event: Any) -> None:
+            """Guarded wrapper: a telemetry bug must never kill a turn.
+
+            An exception raised in here previously propagated into the SDK and
+            aborted the session ("'str' object has no attribute 'get'" ended a
+            turn at 5.8s). Progress reporting is strictly observability, so it
+            fails soft and logs instead.
+            """
+            try:
+                _dispatch(event)
+            except Exception:  # noqa: BLE001 - never let reporting break a turn
+                log.exception("event handler failed for %r", getattr(event, "type", "?"))
+
+        def _dispatch(event: Any) -> None:
             """Single sync handler for every session event.
 
             The SDK's ``on()`` takes ONE handler and dispatches by
@@ -261,10 +276,47 @@ class AgentRunner:
             data = getattr(event, "data", None)
 
             def f(name: str, default: Any = "") -> Any:
-                """Read a field off the typed dataclass or dict payload."""
+                """Read a field off the typed dataclass or dict payload.
+
+                Guards the case where ``data`` is neither -- some events carry
+                a bare string payload, and calling ``.get`` on it raised
+                "'str' object has no attribute 'get'", killing the turn.
+                """
                 if isinstance(data, dict):
                     return data.get(name, default)
                 return getattr(data, name, default)
+
+            def jsonable(value: Any) -> Any:
+                """Coerce a payload field into something json.dumps can take.
+
+                ``arguments`` is typed ``Any`` and arrives as a JSON *string*
+                from the CLI, but as a dict in-process. Normalise so the panel
+                always receives an object.
+                """
+                if isinstance(value, str):
+                    try:
+                        return json.loads(value)
+                    except (ValueError, TypeError):
+                        return {"raw": value[:200]}
+                if isinstance(value, dict):
+                    return value
+                return {}
+
+            def as_text(value: Any) -> str:
+                """Some 'description'-style fields are objects, not strings."""
+                if value is None:
+                    return ""
+                if isinstance(value, str):
+                    return value
+                for attr in ("text", "content", "name", "description"):
+                    got = getattr(value, attr, None)
+                    if isinstance(got, str):
+                        return got
+                if isinstance(value, dict):
+                    for key in ("text", "content", "name", "description"):
+                        if isinstance(value.get(key), str):
+                            return value[key]
+                return str(value)
 
             # ---- assistant text -------------------------------------------
             if etype == "assistant.message_delta":
@@ -282,53 +334,53 @@ class AgentRunner:
             # Its own frame type so the panel can render it as a separate,
             # collapsible bubble instead of concatenating it into the answer.
             elif etype == "assistant.reasoning":
-                text = f("content")
+                text = as_text(f("content"))
                 if text:
-                    emit({"type": "reasoning", "text": str(text)})
+                    emit({"type": "reasoning", "text": text})
 
             # ---- subagent lifecycle ---------------------------------------
             elif etype == "subagent.started":
-                name = str(f("agent_display_name") or f("agent_name") or "subagent")
+                name = as_text(f("agent_display_name")) or as_text(f("agent_name")) or "subagent"
                 emit({
                     "type": "subagent_started",
                     "name": name,
-                    "model": str(f("model") or ""),
-                    "description": str(f("agent_description") or ""),
+                    "model": as_text(f("model")),
+                    "description": as_text(f("agent_description")),
                 })
                 open_span(
                     f"sub:{f('tool_call_id')}",
-                    f"invoke_agent {f('agent_name') or name}",
+                    f"invoke_agent {as_text(f('agent_name')) or name}",
                     {
                         "gen_ai.operation.name": "invoke_agent",
-                        "gen_ai.agent.name": str(f("agent_name") or name),
-                        "gen_ai.agent.description": str(f("agent_description") or ""),
-                        "gen_ai.request.model": str(f("model") or ""),
+                        "gen_ai.agent.name": as_text(f("agent_name")) or name,
+                        "gen_ai.agent.description": as_text(f("agent_description")),
+                        "gen_ai.request.model": as_text(f("model")),
                         "gen_ai.conversation.id": relay_session,
                     },
                 )
 
             elif etype == "subagent.completed":
-                name = str(f("agent_display_name") or f("agent_name") or "subagent")
+                name = as_text(f("agent_display_name")) or as_text(f("agent_name")) or "subagent"
                 emit({
                     "type": "subagent_completed",
                     "name": name,
-                    "duration_ms": f("duration", 0),
-                    "total_tokens": f("total_tokens", 0),
-                    "tool_calls": f("total_tool_calls", 0),
+                    "duration_ms": _num(f("duration")),
+                    "total_tokens": _num(f("total_tokens")),
+                    "tool_calls": _num(f("total_tool_calls")),
                 })
                 close_span(
                     f"sub:{f('tool_call_id')}",
                     {
-                        "gen_ai.usage.total_tokens": f("total_tokens"),
-                        "gen_ai.agent.tool_calls": f("total_tool_calls"),
+                        "gen_ai.usage.total_tokens": _num(f("total_tokens")),
+                        "gen_ai.agent.tool_calls": _num(f("total_tool_calls")),
                     },
                 )
 
             elif etype == "subagent.failed":
                 emit({
                     "type": "subagent_failed",
-                    "name": str(f("agent_name") or "subagent"),
-                    "error": str(f("error") or "failed"),
+                    "name": as_text(f("agent_name")) or "subagent",
+                    "error": as_text(f("error")) or "failed",
                 })
                 close_span(f"sub:{f('tool_call_id')}", {"error": True})
 
@@ -337,7 +389,7 @@ class AgentRunner:
                 emit({
                     "type": "tool_started",
                     "name": str(f("tool_name") or "tool"),
-                    "arguments": f("arguments", {}),
+                    "arguments": jsonable(f("arguments", {})),
                 })
                 open_span(
                     f"tool:{f('tool_call_id')}",
@@ -346,7 +398,7 @@ class AgentRunner:
                         "gen_ai.operation.name": "execute_tool",
                         "gen_ai.tool.name": str(f("tool_name") or ""),
                         "gen_ai.tool.call.id": str(f("tool_call_id") or ""),
-                        "gen_ai.tool.description": str(f("tool_description") or ""),
+                        "gen_ai.tool.description": as_text(f("tool_description")),
                         "gen_ai.conversation.id": relay_session,
                     },
                 )
@@ -355,25 +407,25 @@ class AgentRunner:
                 ok = bool(f("success", True))
                 emit({
                     "type": "tool_finished",
-                    "name": str(f("tool_description") or "tool"),
+                    "name": as_text(f("tool_description")) or "tool",
                     "success": ok,
-                    "error": str(f("error") or ""),
+                    "error": as_text(f("error")),
                 })
                 close_span(
                     f"tool:{f('tool_call_id')}",
-                    {"gen_ai.tool.success": ok, "error.type": str(f("error") or "")},
+                    {"gen_ai.tool.success": ok, "error.type": as_text(f("error"))},
                 )
 
             # ---- skills ----------------------------------------------------
             elif etype == "skill.invoked":
-                emit({"type": "skill_invoked", "name": str(f("name") or "skill")})
+                emit({"type": "skill_invoked", "name": as_text(f("name")) or "skill"})
 
             # ---- token usage ----------------------------------------------
             elif etype == "assistant.usage":
                 emit({
                     "type": "usage",
-                    "input_tokens": f("input_tokens", 0),
-                    "output_tokens": f("output_tokens", 0),
+                    "input_tokens": _num(f("input_tokens")),
+                    "output_tokens": _num(f("output_tokens")),
                 })
 
             # ---- terminal --------------------------------------------------
@@ -405,6 +457,26 @@ class AgentRunner:
             for key in list(spans):
                 close_span(key, {"error.type": "turn ended before completion"})
         return answer
+
+
+def _num(value: Any) -> float | int:
+    """Coerce a numeric-ish payload field to a JSON-safe number.
+
+    ``duration`` arrives as a ``timedelta`` and several counters are
+    ``| None``; both break json.dumps or arithmetic in the panel.
+    """
+    if value is None:
+        return 0
+    if isinstance(value, timedelta):
+        return round(value.total_seconds() * 1000)
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return value
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _delta_text(event: Any) -> str:
