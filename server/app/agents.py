@@ -9,22 +9,50 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 from copilot import CopilotClient
 
 from .browser_tools import bind_session, browser_tools
-from .config import COPILOT_HOME, COPILOT_MODEL, GITHUB_TOKEN, SKILLS_DIR
+from .config import (
+    COPILOT_HOME,
+    COPILOT_MODEL,
+    FOUNDRY_AGENT_NAME,
+    GITHUB_TOKEN,
+    SKILLS_DIR,
+)
 from .hub import hub
 from .ops_tools import ops_tools
 from .telemetry import tracer
 
 log = logging.getLogger("agents")
 
-MASTER_PROMPT = """You are the Fleet Operations orchestrator.
+#: The demo ops board. Served over HTTP deliberately: a file:// tab cannot be
+#: scripted by the extension (Chrome requires the per-extension "Allow access
+#: to file URLs" opt-in, which a manifest cannot request), so the agent would
+#: fail with a permissions error and ask the operator for a URL.
+OPS_BOARD_URL = os.getenv("OPS_BOARD_URL", "http://localhost:5055")
+
+MASTER_PROMPT = f"""You are the Fleet Operations orchestrator.
 
 You are the only agent with browser tools. The browser runs inside the
 operator's authenticated session, so you can read pages they are signed in to.
+
+The operations console (the "ops board" / "shipment board") is always at:
+
+    {OPS_BOARD_URL}
+
+Never ask the operator for its URL. If the active tab is not already on that
+page -- including when it is a file:// path, a blank tab, or anything else --
+call `browser_navigate` with exactly {OPS_BOARD_URL} and carry on. A file://
+tab cannot be read for security reasons, so navigating is the correct fix
+rather than reporting failure.
+
+Useful selectors on that page:
+  #shipments  the shipment table   (use browser_read_table)
+  #filter     status filter select (use browser_fill, then click #apply)
+  #detail     detail pane revealed by clicking a shipment row
 
 Your job:
 1. Use browser tools to gather data from the operations console.
@@ -37,7 +65,7 @@ Your job:
 Rules:
 - Read data before reasoning about it. Never invent a shipment or a number.
 - Pass structured JSON between subagents, not prose summaries.
-- If the browser is not connected, say so plainly and stop.
+- If a browser tool fails, say which tool and why. Do not silently guess.
 """
 
 CUSTOM_AGENTS: list[dict[str, Any]] = [
@@ -143,6 +171,15 @@ class AgentRunner:
             session = await self._client.create_session(
                 model=COPILOT_MODEL,
                 streaming=True,
+                # Without this the SDK reports only the MASTER's stream, so a
+                # subagent's work is invisible between `subagent.started` and
+                # `subagent.completed`.
+                include_sub_agent_streaming_events=True,
+                # MASTER_PROMPT was previously defined but never passed, so the
+                # orchestrator ran with no system prompt at all -- which is why
+                # it improvised (e.g. asking the operator for the board URL)
+                # instead of following the delegation rules.
+                system_message=MASTER_PROMPT,
                 enable_skills=True,
                 skill_directories=[str(SKILLS_DIR)],
                 # ops_tools() are in-process (see ops_tools.py) and ship inside
@@ -180,6 +217,37 @@ class AgentRunner:
         done = asyncio.Event()
         loop = asyncio.get_running_loop()
 
+        # Open spans keyed by tool_call_id, so a subagent/tool span closes on
+        # its OWN completion event rather than being guessed at by ordering.
+        # Foundry renders nesting from parent/child span links, so these are
+        # started as children of the current `invoke_agent` span.
+        spans: dict[str, Any] = {}
+        turn_ctx = tracer().start_as_current_span(
+            f"invoke_agent {FOUNDRY_AGENT_NAME}"
+        )
+
+        def emit(payload: dict) -> None:
+            """Push one discrete frame to the panel."""
+            loop.create_task(hub.send(relay_session, payload))
+
+        def open_span(key: str, name: str, attrs: dict) -> None:
+            if not key or key in spans:
+                return
+            span = tracer().start_span(name)
+            for k, v in attrs.items():
+                if v is not None:
+                    span.set_attribute(k, v)
+            spans[key] = span
+
+        def close_span(key: str, attrs: dict | None = None) -> None:
+            span = spans.pop(key, None)
+            if span is None:
+                return
+            for k, v in (attrs or {}).items():
+                if v is not None:
+                    span.set_attribute(k, v)
+            span.end()
+
         def dispatch(event: Any) -> None:
             """Single sync handler for every session event.
 
@@ -190,47 +258,152 @@ class AgentRunner:
             Anything async is therefore scheduled back onto the loop.
             """
             etype = getattr(event.type, "value", str(event.type))
+            data = getattr(event, "data", None)
 
+            def f(name: str, default: Any = "") -> Any:
+                """Read a field off the typed dataclass or dict payload."""
+                if isinstance(data, dict):
+                    return data.get(name, default)
+                return getattr(data, name, default)
+
+            # ---- assistant text -------------------------------------------
             if etype == "assistant.message_delta":
                 text = _delta_text(event)
                 if text:
                     chunks.append(text)
-                    loop.create_task(
-                        hub.send(relay_session, {"type": "assistant_delta", "text": text})
-                    )
+                    emit({"type": "assistant_delta", "text": text})
 
             elif etype == "assistant.message":
                 text = _message_text(event)
                 if text:
-                    loop.create_task(
-                        hub.send(relay_session, {"type": "assistant_message", "text": text})
-                    )
+                    emit({"type": "assistant_message", "text": text})
 
+            # ---- reasoning ("thought process") ----------------------------
+            # Its own frame type so the panel can render it as a separate,
+            # collapsible bubble instead of concatenating it into the answer.
+            elif etype == "assistant.reasoning":
+                text = f("content")
+                if text:
+                    emit({"type": "reasoning", "text": str(text)})
+
+            # ---- subagent lifecycle ---------------------------------------
+            elif etype == "subagent.started":
+                name = str(f("agent_display_name") or f("agent_name") or "subagent")
+                emit({
+                    "type": "subagent_started",
+                    "name": name,
+                    "model": str(f("model") or ""),
+                    "description": str(f("agent_description") or ""),
+                })
+                open_span(
+                    f"sub:{f('tool_call_id')}",
+                    f"invoke_agent {f('agent_name') or name}",
+                    {
+                        "gen_ai.operation.name": "invoke_agent",
+                        "gen_ai.agent.name": str(f("agent_name") or name),
+                        "gen_ai.agent.description": str(f("agent_description") or ""),
+                        "gen_ai.request.model": str(f("model") or ""),
+                        "gen_ai.conversation.id": relay_session,
+                    },
+                )
+
+            elif etype == "subagent.completed":
+                name = str(f("agent_display_name") or f("agent_name") or "subagent")
+                emit({
+                    "type": "subagent_completed",
+                    "name": name,
+                    "duration_ms": f("duration", 0),
+                    "total_tokens": f("total_tokens", 0),
+                    "tool_calls": f("total_tool_calls", 0),
+                })
+                close_span(
+                    f"sub:{f('tool_call_id')}",
+                    {
+                        "gen_ai.usage.total_tokens": f("total_tokens"),
+                        "gen_ai.agent.tool_calls": f("total_tool_calls"),
+                    },
+                )
+
+            elif etype == "subagent.failed":
+                emit({
+                    "type": "subagent_failed",
+                    "name": str(f("agent_name") or "subagent"),
+                    "error": str(f("error") or "failed"),
+                })
+                close_span(f"sub:{f('tool_call_id')}", {"error": True})
+
+            # ---- tool execution -------------------------------------------
+            elif etype == "tool.execution_start":
+                emit({
+                    "type": "tool_started",
+                    "name": str(f("tool_name") or "tool"),
+                    "arguments": f("arguments", {}),
+                })
+                open_span(
+                    f"tool:{f('tool_call_id')}",
+                    f"execute_tool {f('tool_name')}",
+                    {
+                        "gen_ai.operation.name": "execute_tool",
+                        "gen_ai.tool.name": str(f("tool_name") or ""),
+                        "gen_ai.tool.call.id": str(f("tool_call_id") or ""),
+                        "gen_ai.tool.description": str(f("tool_description") or ""),
+                        "gen_ai.conversation.id": relay_session,
+                    },
+                )
+
+            elif etype == "tool.execution_complete":
+                ok = bool(f("success", True))
+                emit({
+                    "type": "tool_finished",
+                    "name": str(f("tool_description") or "tool"),
+                    "success": ok,
+                    "error": str(f("error") or ""),
+                })
+                close_span(
+                    f"tool:{f('tool_call_id')}",
+                    {"gen_ai.tool.success": ok, "error.type": str(f("error") or "")},
+                )
+
+            # ---- skills ----------------------------------------------------
+            elif etype == "skill.invoked":
+                emit({"type": "skill_invoked", "name": str(f("name") or "skill")})
+
+            # ---- token usage ----------------------------------------------
+            elif etype == "assistant.usage":
+                emit({
+                    "type": "usage",
+                    "input_tokens": f("input_tokens", 0),
+                    "output_tokens": f("output_tokens", 0),
+                })
+
+            # ---- terminal --------------------------------------------------
             elif etype == "session.idle":
                 loop.call_soon_threadsafe(done.set)
 
             elif etype == "session.error":
-                loop.create_task(
-                    hub.send(
-                        relay_session,
-                        {"type": "error", "message": str(getattr(event, "data", event))},
-                    )
-                )
+                emit({"type": "error", "message": str(data if data is not None else event)})
                 loop.call_soon_threadsafe(done.set)
 
         unsubscribe = session.on(dispatch)
 
         try:
-            with tracer().start_as_current_span("agent.turn") as span:
-                span.set_attribute("session.relay", relay_session)
-                span.set_attribute("prompt.chars", len(prompt))
+            with turn_ctx as span:
+                span.set_attribute("gen_ai.operation.name", "invoke_agent")
+                span.set_attribute("gen_ai.agent.name", FOUNDRY_AGENT_NAME)
+                span.set_attribute("gen_ai.request.model", COPILOT_MODEL)
+                span.set_attribute("gen_ai.conversation.id", relay_session)
+                span.set_attribute("gen_ai.input.messages", prompt[:4000])
                 await session.send(prompt=prompt)
                 await done.wait()
                 answer = "".join(chunks).strip()
-                span.set_attribute("answer.chars", len(answer))
+                span.set_attribute("gen_ai.output.messages", answer[:4000])
         finally:
             # Without this, every turn stacks another handler on the session.
             unsubscribe()
+            # A turn that errors mid-tool would otherwise leak an unended span,
+            # which Foundry renders as a trace that never completes.
+            for key in list(spans):
+                close_span(key, {"error.type": "turn ended before completion"})
         return answer
 
 

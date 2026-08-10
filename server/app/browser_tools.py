@@ -6,6 +6,8 @@ operator's already-authenticated tab, so SSO/MFA are never re-solved server side
 """
 from __future__ import annotations
 
+import json
+
 from pydantic import BaseModel, Field
 
 from copilot import Tool, ToolInvocation, ToolResult, define_tool
@@ -53,11 +55,18 @@ def _relay(tool_name: str):
     async def handler(inv: ToolInvocation) -> ToolResult:
         args = inv.arguments if isinstance(inv.arguments, dict) else {}
         session_id = _SESSION_BINDING.get(inv.session_id, inv.session_id)
-        with tracer().start_as_current_span(f"browser.{tool_name}") as span:
-            span.set_attribute("browser.tool", tool_name)
-            span.set_attribute("session.id", session_id)
+        # Named per the OTel GenAI semantic conventions ("execute_tool {name}")
+        # so Foundry's agent view renders this as a tool step. A custom span
+        # name like "browser.x" is ingested but not recognised, which is why
+        # these did not previously appear alongside invoke_agent.
+        with tracer().start_as_current_span(f"execute_tool {tool_name}") as span:
+            span.set_attribute("gen_ai.operation.name", "execute_tool")
+            span.set_attribute("gen_ai.tool.name", tool_name)
+            span.set_attribute("gen_ai.tool.type", "browser")
+            span.set_attribute("gen_ai.conversation.id", session_id)
+            span.set_attribute("gen_ai.tool.call.arguments", json.dumps(args)[:2000])
             output = await hub.dispatch_tool(session_id, tool_name, args)
-            span.set_attribute("browser.result_bytes", len(output))
+            span.set_attribute("gen_ai.tool.call.result", str(output)[:2000])
         return ToolResult(text_result_for_llm=output)
 
     return handler

@@ -46,6 +46,35 @@ button.ghost:hover { color:var(--txt); border-color:var(--hi); }
   padding:3px 0 3px 9px;
 }
 .msg.err { background:#3a1a1a; border:1px solid var(--bad); color:#ffc9c6; }
+
+/* ---- per-step bubbles ------------------------------------------------- */
+/* Each intermediate step is its own message, visually subordinate to chat
+   text so the transcript still reads as a conversation. */
+.msg.step {
+  background:transparent; border-radius:0; padding:3px 0 3px 9px;
+  border-left:2px solid var(--line); font-size:11px; color:var(--mut);
+}
+.step-head { font-family:ui-monospace,monospace; }
+.step-detail {
+  opacity:.72; font-family:ui-monospace,monospace; font-size:10px;
+  margin-top:2px; word-break:break-all;
+}
+.msg.step.tool  { border-left-color:var(--tool); }
+.msg.step.agent { border-left-color:var(--hi); color:#cfe2ff; }
+.msg.step.skill { border-left-color:#a97bff; }
+.msg.step.think { border-left-color:#5b6b86; }
+.msg.step.usage { border-left-color:#3d4a63; opacity:.7; }
+.msg.step.bad   { border-left-color:var(--bad); color:#ffc9c6; }
+.msg.step details summary {
+  cursor:pointer; list-style:none; font-family:ui-monospace,monospace;
+}
+.msg.step details summary::-webkit-details-marker { display:none; }
+.msg.step details summary::after { content:" ▸"; opacity:.6; }
+.msg.step details[open] summary::after { content:" ▾"; }
+.think-body {
+  margin-top:5px; padding-left:8px; border-left:1px dashed var(--line);
+  white-space:pre-wrap; font-style:italic; opacity:.85;
+}
 .cursor::after { content:"▋"; animation:b 1s steps(2) infinite; }
 @keyframes b { 0%,50%{opacity:1} 51%,100%{opacity:0} }
 .composer { display:flex; gap:6px; padding:10px 14px; border-top:1px solid var(--line); }

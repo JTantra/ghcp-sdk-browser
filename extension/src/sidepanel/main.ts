@@ -24,6 +24,60 @@ function add(cls: string, text: string): HTMLDivElement {
   return el;
 }
 
+/** Icon + css class per step kind. Keeps render logic declarative. */
+const STEP_STYLE: Record<string, { icon: string; cls: string }> = {
+  reasoning: { icon: "🧠", cls: "think" },
+  subagent: { icon: "🤖", cls: "agent" },
+  subagent_done: { icon: "✓", cls: "agent" },
+  tool: { icon: "→", cls: "tool" },
+  tool_done: { icon: "✓", cls: "tool" },
+  skill: { icon: "📘", cls: "skill" },
+  usage: { icon: "◷", cls: "usage" },
+};
+
+/**
+ * Render one intermediate step as its OWN message.
+ *
+ * Reasoning can be long, so it renders inside a <details> the operator can
+ * expand -- keeping the transcript scannable without hiding the content.
+ */
+function addStep(
+  kind: string,
+  title: string,
+  detail?: string,
+  ok?: boolean,
+): HTMLElement {
+  const style = STEP_STYLE[kind] ?? { icon: "•", cls: "tool" };
+  const el = document.createElement("div");
+  el.className = `msg step ${style.cls}${ok === false ? " bad" : ""}`;
+
+  if (kind === "reasoning" && detail) {
+    const box = document.createElement("details");
+    const sum = document.createElement("summary");
+    sum.textContent = `${style.icon} ${title}`;
+    const body = document.createElement("div");
+    body.className = "think-body";
+    body.textContent = detail;
+    box.append(sum, body);
+    el.appendChild(box);
+  } else {
+    const head = document.createElement("div");
+    head.className = "step-head";
+    head.textContent = `${style.icon} ${title}`;
+    el.appendChild(head);
+    if (detail) {
+      const sub = document.createElement("div");
+      sub.className = "step-detail";
+      sub.textContent = detail;
+      el.appendChild(sub);
+    }
+  }
+
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+  return el;
+}
+
 function send(text: string): void {
   const trimmed = text.trim();
   if (!trimmed) return;
@@ -115,6 +169,19 @@ chrome.runtime.onMessage.addListener((msg: PanelMsg) => {
       add("tool", `→ ${msg.tool} ${msg.detail}`);
       break;
 
+    case "step":
+      // Any step ends the current text bubble, so assistant text that resumes
+      // afterwards starts a NEW message instead of being appended to the one
+      // that was streaming before the step. This is what actually splits a
+      // turn into per-step messages in the transcript.
+      if (streaming) {
+        streaming.classList.remove("cursor");
+        if (!streaming.textContent?.trim()) streaming.remove();
+        streaming = null;
+      }
+      addStep(msg.kind, msg.title, msg.detail, msg.ok);
+      break;
+
     case "started":
       streaming = add("bot", "");
       streaming.classList.add("cursor");
@@ -130,11 +197,18 @@ chrome.runtime.onMessage.addListener((msg: PanelMsg) => {
       break;
 
     case "final":
+      // Only stamp the full text when nothing streamed. Overwriting a live
+      // bubble would duplicate content now that a step can split the answer
+      // into several bubbles -- the last one holds just the final fragment,
+      // while msg.text is the entire turn.
       if (streaming) {
         streaming.classList.remove("cursor");
-        if (msg.text) streaming.textContent = msg.text;
+        if (!streaming.textContent?.trim()) {
+          if (msg.text) streaming.textContent = msg.text;
+          else streaming.remove();
+        }
         streaming = null;
-      } else if (msg.text) {
+      } else if (msg.text && !log.querySelector(".msg.bot")) {
         add("bot", msg.text);
       }
       sendBtn.disabled = false;

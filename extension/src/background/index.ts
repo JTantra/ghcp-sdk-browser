@@ -165,6 +165,72 @@ export async function connect(backendUrl?: string): Promise<void> {
           case "turn_finished":
             toPanel({ type: "final", text: msg.text });
             break;
+
+          // Each intermediate step becomes its own panel bubble. Previously
+          // none of these existed, so a whole turn collapsed into one message.
+          case "reasoning":
+            toPanel({ type: "step", kind: "reasoning", title: "Thinking", detail: msg.text });
+            break;
+          case "subagent_started":
+            toPanel({
+              type: "step",
+              kind: "subagent",
+              title: `${msg.name} started`,
+              detail: msg.model ? `model ${msg.model}` : msg.description,
+            });
+            break;
+          case "subagent_completed":
+            toPanel({
+              type: "step",
+              kind: "subagent_done",
+              title: `${msg.name} finished`,
+              detail: [
+                msg.duration_ms ? `${(msg.duration_ms / 1000).toFixed(1)}s` : "",
+                msg.total_tokens ? `${msg.total_tokens} tokens` : "",
+                msg.tool_calls ? `${msg.tool_calls} tool calls` : "",
+              ]
+                .filter(Boolean)
+                .join(" · "),
+              ok: true,
+            });
+            break;
+          case "subagent_failed":
+            toPanel({
+              type: "step",
+              kind: "subagent_done",
+              title: `${msg.name} failed`,
+              detail: msg.error,
+              ok: false,
+            });
+            break;
+          case "tool_started":
+            toPanel({
+              type: "step",
+              kind: "tool",
+              title: msg.name,
+              detail: JSON.stringify(msg.arguments ?? {}).slice(0, 200),
+            });
+            break;
+          case "tool_finished":
+            toPanel({
+              type: "step",
+              kind: "tool_done",
+              title: msg.name,
+              detail: msg.error,
+              ok: msg.success,
+            });
+            break;
+          case "skill_invoked":
+            toPanel({ type: "step", kind: "skill", title: `skill: ${msg.name}` });
+            break;
+          case "usage":
+            toPanel({
+              type: "step",
+              kind: "usage",
+              title: `${msg.input_tokens} in / ${msg.output_tokens} out tokens`,
+            });
+            break;
+
           case "error":
             toPanel({ type: "error", message: msg.message });
             break;
@@ -264,6 +330,42 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
+/**
+ * Keepalive + self-healing reconnect.
+ *
+ * Root cause of "disconnected after a few minutes": this is a Manifest V3
+ * service worker, and Chrome terminates an idle one after ~30 seconds. An
+ * in-flight `fetch` does NOT keep it alive indefinitely, so the SSE stream was
+ * being torn down with the worker -- and because the worker was gone, the
+ * exponential-backoff reconnect in scheduleReconnect() never ran either.
+ *
+ * `chrome.alarms` survives worker termination and wakes it back up. A period
+ * of 0.5 min is the practical floor and comfortably under the idle timeout.
+ * On each tick we re-assert the connection, which both keeps the worker warm
+ * and repairs a stream that died while the worker was asleep.
+ */
+const KEEPALIVE_ALARM = "sse-keepalive";
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== KEEPALIVE_ALARM) return;
+  if (closingIntentionally) return;
+  if (transport?.isConnected) return;
+  // Not connected and not deliberately closed -> the worker was probably
+  // recycled. Reconnect, reusing the stored session so the sandbox persists.
+  void connect();
+});
+
+function startKeepalive(): void {
+  chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.5 });
+}
+
+chrome.runtime.onStartup.addListener(startKeepalive);
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  startKeepalive();
 });
+
+// Also arm it on plain worker wake-up (neither onStartup nor onInstalled fires
+// when Chrome revives a terminated worker to deliver an event).
+startKeepalive();

@@ -10,7 +10,8 @@
     "activeTab",
     "sidePanel",
     "storage",
-    "identity"
+    "identity",
+    "alarms"
   ],
   "host_permissions": [
     "http://localhost/*",

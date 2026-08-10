@@ -50,8 +50,10 @@ class CarrierPolicyParams(BaseModel):
 async def _node_capacity(inv: ToolInvocation) -> ToolResult:
     args = inv.arguments if isinstance(inv.arguments, dict) else {}
     node = str(args.get("node", "")).strip()
-    with tracer().start_as_current_span("ops.node_capacity") as span:
-        span.set_attribute("ops.node", node)
+    with tracer().start_as_current_span("execute_tool ops_node_capacity") as span:
+        span.set_attribute("gen_ai.operation.name", "execute_tool")
+        span.set_attribute("gen_ai.tool.name", "ops_node_capacity")
+        span.set_attribute("gen_ai.tool.call.arguments", json.dumps(args)[:2000])
         data = NODE_CAPACITY.get(node)
         if data is None:
             payload = {"node": node, "known": False,
@@ -64,8 +66,10 @@ async def _node_capacity(inv: ToolInvocation) -> ToolResult:
 async def _carrier_policy(inv: ToolInvocation) -> ToolResult:
     args = inv.arguments if isinstance(inv.arguments, dict) else {}
     carrier = str(args.get("carrier", "default")) or "default"
-    with tracer().start_as_current_span("ops.carrier_policy") as span:
-        span.set_attribute("ops.carrier", carrier)
+    with tracer().start_as_current_span("execute_tool ops_carrier_policy") as span:
+        span.set_attribute("gen_ai.operation.name", "execute_tool")
+        span.set_attribute("gen_ai.tool.name", "ops_carrier_policy")
+        span.set_attribute("gen_ai.tool.call.arguments", json.dumps(args)[:2000])
         payload = {"carrier": carrier, **CARRIER_POLICY.get(carrier, CARRIER_POLICY["default"])}
     return ToolResult(text_result_for_llm=json.dumps(payload))
 
