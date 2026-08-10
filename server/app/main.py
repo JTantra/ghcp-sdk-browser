@@ -44,9 +44,15 @@ async def readiness(_request: Request) -> PlainTextResponse:
 
 
 async def info(_request: Request) -> JSONResponse:
+    from .telemetry import telemetry_status
+
     return JSONResponse(
         {
             "agent": "ghcp-sdk-browser",
+            # Reports whether spans can actually reach Application Insights.
+            # Without this the exporter falls back to console and traces
+            # vanish silently -- which looks identical to "tracing is broken".
+            "telemetry": telemetry_status(),
             "master_tools": [
                 "browser_navigate", "browser_read_table", "browser_read_text",
                 "browser_click", "browser_fill", "browser_wait_for",

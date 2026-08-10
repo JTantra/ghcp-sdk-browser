@@ -46,7 +46,7 @@
 </header>
 <main>
   <div class="bar">
-    <input id="filter" placeholder="Filter by vessel or route…" style="width:280px"/>
+    <input id="filter" placeholder="Filter by ref, vessel, route or status…" style="width:280px"/>
     <select id="status">
       <option value="">All statuses</option>
       <option value="Delayed">Delayed</option>
@@ -105,12 +105,22 @@ function render(rows){
   });
 }
 function apply(){
-  const q=document.getElementById("filter").value.toLowerCase();
+  const q=document.getElementById("filter").value.trim().toLowerCase();
   const s=document.getElementById("status").value;
-  render(DATA.filter(r=>(!q||r[1].toLowerCase().includes(q)||r[2].toLowerCase().includes(q))
-                     &&(!s||r[6]===s)));
+  // Search across ref, vessel, route AND status, so typing "delayed" (or
+  // "sh-4420") filters the board without touching the dropdown. The dropdown
+  // still applies as an additional AND constraint when set.
+  const hit=r=>!q||[r[0],r[1],r[2],r[6]].some(f=>String(f).toLowerCase().includes(q));
+  render(DATA.filter(r=>hit(r)&&(!s||r[6]===s)));
 }
 document.getElementById("apply").onclick=apply;
+// Live filtering: waiting for Apply made the box feel broken, and it lets the
+// agent call browser_fill on #filter without a follow-up click.
+document.getElementById("filter").addEventListener("input",apply);
+document.getElementById("status").addEventListener("change",apply);
+document.getElementById("filter").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){e.preventDefault();apply();}
+});
 setInterval(()=>document.getElementById("clock").textContent=new Date().toUTCString().slice(17,25)+" UTC",1000);
 render(DATA);
 </script>

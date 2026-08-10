@@ -25,6 +25,20 @@ services:
               value: ${GITHUB_TOKEN}
             - name: COPILOT_MODEL
               value: ${COPILOT_MODEL}
+            # The hosted runtime does NOT inject this, so the exporter fell
+            # back to console and no span ever reached Foundry -- the portal
+            # showed only the platform's own 11ms invoke_agent wrapper. This
+            # is the project's attached App Insights (appInsights-connection-8822).
+            - name: APPLICATIONINSIGHTS_CONNECTION_STRING
+              value: ${APPLICATIONINSIGHTS_CONNECTION_STRING}
+            # Foundry renders agent traces only when the GenAI semantic
+            # conventions are opted into.
+            - name: OTEL_SEMCONV_STABILITY_OPT_IN
+              value: gen_ai_latest_experimental
+            - name: AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING
+              value: "true"
+            - name: OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT
+              value: "true"
         kind: hosted
         name: ghcp-sdk-browser
         protocols:

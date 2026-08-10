@@ -26,7 +26,7 @@ from .config import (
 )
 from .hub import hub
 from .ops_tools import ops_tools
-from .telemetry import tracer
+from .telemetry import flush, tracer
 
 log = logging.getLogger("agents")
 
@@ -163,6 +163,24 @@ class AgentRunner:
         if self._client is not None:
             await self._client.stop()
             self._client = None
+
+    async def end_session(self, relay_session: str) -> bool:
+        """Drop one relay session's Copilot session.
+
+        The platform mints a new agent_session_id for a new session, so a
+        stale one would otherwise sit in memory for the life of the container
+        holding its conversation history.
+        """
+        async with self._lock:
+            session = self._sessions.pop(relay_session, None)
+        if session is None:
+            return False
+        try:
+            await session.disconnect()
+        except Exception:  # noqa: BLE001 - teardown must not raise
+            log.debug("disconnect failed for %s", relay_session, exc_info=True)
+        log.info("session ended relay=%s", relay_session)
+        return True
 
     async def _session_for(self, relay_session: str):
         async with self._lock:
@@ -485,6 +503,9 @@ class AgentRunner:
             # which Foundry renders as a trace that never completes.
             for key in list(spans):
                 close_span(key, {"error.type": "turn ended before completion"})
+            # Ship them now rather than waiting on the 5s batch window; the
+            # container can be scaled down between turns.
+            flush()
         return answer
 
 

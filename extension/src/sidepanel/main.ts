@@ -154,7 +154,13 @@ $("uselocal").onclick = () => {
 
 $("newsession").onclick = () => {
   chrome.runtime.sendMessage({ type: "new_session" }, () => {
-    add("tool", "started a new session - press Connect");
+    // Wipe the transcript: the previous session's steps and answers belong to
+    // a sandbox that no longer exists, so keeping them on screen implies a
+    // continuity the agent does not have.
+    log.replaceChildren();
+    streaming = null;
+    sendBtn.disabled = false;
+    add("tool", "new session - previous conversation cleared. Press Connect.");
   });
 };
 
