@@ -105,6 +105,13 @@ async def invocations(request: Request):
         hub.resolve_tool(body)
         return JSONResponse({"ok": True}, headers={"agent_session_id": session_id})
 
+    if mode == "end_session":
+        # The extension calls this when the operator starts a new session, so
+        # the old Copilot session (and its conversation history) is released
+        # rather than lingering for the life of the container.
+        ended = await runner.end_session(session_id)
+        return JSONResponse({"ok": True, "ended": ended})
+
     if mode == "prompt":
         return await start_turn(session_id, body.get("text", ""))
 

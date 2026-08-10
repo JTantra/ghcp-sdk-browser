@@ -282,6 +282,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       });
       sendResponse({ ok: true });
     } else if (msg.type === "new_session") {
+      // Tell the server to release the old Copilot session before we forget
+      // its id -- afterwards we no longer know which one to end.
+      if (transport?.isConnected) {
+        try {
+          await transport.post({ mode: "end_session" });
+        } catch {
+          /* best effort: a dead session is released when the container recycles */
+        }
+      }
       // Clearing the id (rather than minting one) is what makes the next
       // connect ask the platform for a new session.
       await chrome.storage.local.remove("sessionId");
