@@ -1,0 +1,22 @@
+2026-08-10T08:59:34.181Z [INFO] Starting CLI in server mode (stdio)
+2026-08-10T08:59:34.183Z [INFO] Starting CLI in stdio mode (Rust JSON-RPC engine)
+2026-08-10T08:59:34.183Z [INFO] Shell completions: no writable completion directory found for bash, skipping
+2026-08-10T08:59:34.184Z [INFO] CLI server ready (stdio mode, Rust JSON-RPC engine)
+2026-08-10T08:59:34.184Z [INFO] Server started, waiting for requests
+2026-08-10T08:59:37.519Z [INFO] Workspace initialized: dc2c0799-5569-4d02-8027-a696ef0e8905 (checkpoints: 0)
+2026-08-10T08:59:37.543Z [INFO] Created session: dc2c0799-5569-4d02-8027-a696ef0e8905
+2026-08-10T08:59:37.584Z [INFO]  
+2026-08-10T08:59:37.584Z [INFO] --- Start of group: configured settings: ---
+2026-08-10T08:59:37.584Z [INFO] --- End of group ---
+2026-08-10T08:59:37.714Z [INFO] --- Start of group: Completion request configuration:  ---
+2026-08-10T08:59:37.717Z [INFO] --- End of group ---
+2026-08-10T08:59:37.739Z [INFO]  
+2026-08-10T08:59:37.739Z [INFO] --- Start of group: configured settings: ---
+2026-08-10T08:59:37.739Z [INFO] --- End of group ---
+2026-08-10T08:59:39.769Z [INFO] Closing session dc2c0799-5569-4d02-8027-a696ef0e8905
+2026-08-10T08:59:39.791Z [ERROR] Failed to shut down shell processes: Error: unknown taskRegistry handle 1
+2026-08-10T08:59:39.791Z [INFO] Destroyed session: dc2c0799-5569-4d02-8027-a696ef0e8905
+2026-08-10T08:59:39.792Z [INFO] Preparing runtime for graceful shutdown
+2026-08-10T08:59:39.792Z [INFO] Starting graceful shutdown of CLI server
+2026-08-10T08:59:39.793Z [INFO] Destroying 0 active sessions
+2026-08-10T08:59:39.793Z [INFO] CLI server prepared for shutdown; transport remains open for RPC response

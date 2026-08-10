@@ -1,0 +1,12 @@
+id: dc2c0799-5569-4d02-8027-a696ef0e8905
+cwd: /home/jtantra/dev/live/ghcp-sdk-browser/server
+git_root: /home/jtantra/dev/live/ghcp-sdk-browser
+repository: JTantra/ghcp-sdk-browser
+host_type: github
+branch: master
+client_name: sdk
+name: Say hello in exactly five words. Do not use tools.
+user_named: false
+summary_count: 0
+created_at: 2026-08-10T08:59:37.499Z
+updated_at: 2026-08-10T08:59:37.685Z

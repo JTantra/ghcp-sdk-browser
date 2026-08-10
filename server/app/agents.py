@@ -178,10 +178,14 @@ class AgentRunner:
                 # `subagent.completed`.
                 include_sub_agent_streaming_events=True,
                 # MASTER_PROMPT was previously defined but never passed, so the
-                # orchestrator ran with no system prompt at all -- which is why
-                # it improvised (e.g. asking the operator for the board URL)
-                # instead of following the delegation rules.
-                system_message=MASTER_PROMPT,
+                # orchestrator ran with no instructions at all -- which is why
+                # it improvised (e.g. asking the operator for the board URL).
+                # `system_message` takes a CONFIG DICT, not a bare string:
+                # passing a str raises "'str' object has no attribute 'get'"
+                # inside the SDK and kills the turn. "append" keeps the CLI's
+                # own tool-use foundation and adds ours, where "replace" would
+                # drop the SDK's guardrails entirely.
+                system_message={"mode": "append", "content": MASTER_PROMPT},
                 enable_skills=True,
                 skill_directories=[str(SKILLS_DIR)],
                 # ops_tools() are in-process (see ops_tools.py) and ship inside
@@ -224,6 +228,10 @@ class AgentRunner:
         # Foundry renders nesting from parent/child span links, so these are
         # started as children of the current `invoke_agent` span.
         spans: dict[str, Any] = {}
+        #: tool_call_id -> tool name, so the completion frame can be labelled.
+        tool_names: dict[str, str] = {}
+        #: reasoning_id -> accumulated reasoning text (delta-only models).
+        reasoning_buf: dict[str, str] = {}
         turn_ctx = tracer().start_as_current_span(
             f"invoke_agent {FOUNDRY_AGENT_NAME}"
         )
@@ -338,6 +346,21 @@ class AgentRunner:
                 if text:
                     emit({"type": "reasoning", "text": text})
 
+            elif etype == "assistant.reasoning_delta":
+                # Some models stream reasoning only as deltas and never send a
+                # consolidated assistant.reasoning, so buffer by reasoning_id
+                # and flush when the model starts speaking.
+                rid = str(f("reasoning_id") or "r")
+                piece = as_text(f("delta_content"))
+                if piece:
+                    reasoning_buf[rid] = reasoning_buf.get(rid, "") + piece
+
+            elif etype in ("assistant.message_start", "assistant.turn_end"):
+                for rid, text in list(reasoning_buf.items()):
+                    if text.strip():
+                        emit({"type": "reasoning", "text": text.strip()})
+                    reasoning_buf.pop(rid, None)
+
             # ---- subagent lifecycle ---------------------------------------
             elif etype == "subagent.started":
                 name = as_text(f("agent_display_name")) or as_text(f("agent_name")) or "subagent"
@@ -386,17 +409,22 @@ class AgentRunner:
 
             # ---- tool execution -------------------------------------------
             elif etype == "tool.execution_start":
+                tname = str(f("tool_name") or "tool")
+                # execution_complete carries no tool_name, so remember it here
+                # to label the completion frame with something meaningful
+                # instead of a generic "tool".
+                tool_names[str(f("tool_call_id"))] = tname
                 emit({
                     "type": "tool_started",
-                    "name": str(f("tool_name") or "tool"),
+                    "name": tname,
                     "arguments": jsonable(f("arguments", {})),
                 })
                 open_span(
                     f"tool:{f('tool_call_id')}",
-                    f"execute_tool {f('tool_name')}",
+                    f"execute_tool {tname}",
                     {
                         "gen_ai.operation.name": "execute_tool",
-                        "gen_ai.tool.name": str(f("tool_name") or ""),
+                        "gen_ai.tool.name": tname,
                         "gen_ai.tool.call.id": str(f("tool_call_id") or ""),
                         "gen_ai.tool.description": as_text(f("tool_description")),
                         "gen_ai.conversation.id": relay_session,
@@ -405,14 +433,15 @@ class AgentRunner:
 
             elif etype == "tool.execution_complete":
                 ok = bool(f("success", True))
+                cid = str(f("tool_call_id"))
                 emit({
                     "type": "tool_finished",
-                    "name": as_text(f("tool_description")) or "tool",
+                    "name": tool_names.pop(cid, None) or as_text(f("tool_description")) or "tool",
                     "success": ok,
                     "error": as_text(f("error")),
                 })
                 close_span(
-                    f"tool:{f('tool_call_id')}",
+                    f"tool:{cid}",
                     {"gen_ai.tool.success": ok, "error.type": as_text(f("error"))},
                 )
 

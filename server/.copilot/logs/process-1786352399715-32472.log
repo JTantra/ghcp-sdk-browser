@@ -1,0 +1,61 @@
+2026-08-10T08:59:59.717Z [INFO] Starting CLI in server mode (stdio)
+2026-08-10T08:59:59.718Z [INFO] Starting CLI in stdio mode (Rust JSON-RPC engine)
+2026-08-10T08:59:59.719Z [INFO] Shell completions: no writable completion directory found for bash, skipping
+2026-08-10T08:59:59.719Z [INFO] CLI server ready (stdio mode, Rust JSON-RPC engine)
+2026-08-10T08:59:59.719Z [INFO] Server started, waiting for requests
+2026-08-10T09:00:02.308Z [INFO] Workspace initialized: 433d62c9-7d94-49c3-b1a5-cf47d86122f8 (checkpoints: 0)
+2026-08-10T09:00:02.324Z [INFO] Created session: 433d62c9-7d94-49c3-b1a5-cf47d86122f8
+2026-08-10T09:00:02.367Z [INFO]  
+2026-08-10T09:00:02.367Z [INFO] --- Start of group: configured settings: ---
+2026-08-10T09:00:02.367Z [INFO] --- End of group ---
+2026-08-10T09:00:02.479Z [INFO] --- Start of group: Completion request configuration:  ---
+2026-08-10T09:00:02.481Z [INFO] --- End of group ---
+2026-08-10T09:00:02.495Z [INFO]  
+2026-08-10T09:00:02.496Z [INFO] --- Start of group: configured settings: ---
+2026-08-10T09:00:02.496Z [INFO] --- End of group ---
+2026-08-10T09:00:13.071Z [INFO] SessionAgentExecutor.execute() called for "risk-analyst" (toolCallId=toolu_016upjEFk2kSsNyv2YsStVTs)
+2026-08-10T09:00:13.115Z [INFO] Agent "risk-analyst": loaded 1 skill(s) into context
+2026-08-10T09:00:13.133Z [INFO]  
+2026-08-10T09:00:13.133Z [INFO] --- Start of group: configured settings: ---
+2026-08-10T09:00:13.133Z [INFO] --- End of group ---
+2026-08-10T09:00:13.138Z [INFO] --- Start of group: Completion request configuration:  ---
+2026-08-10T09:00:13.139Z [INFO] --- End of group ---
+2026-08-10T09:00:13.142Z [INFO]  
+2026-08-10T09:00:13.143Z [INFO] --- Start of group: configured settings: ---
+2026-08-10T09:00:13.144Z [INFO] --- End of group ---
+2026-08-10T09:00:23.794Z [INFO] notifySubagentComplete called for agent risk-analyst (toolu_016upjEFk2kSsNyv2YsStVTs), failed=false
+2026-08-10T09:00:31.749Z [INFO] SessionAgentExecutor.execute() called for "recovery-planner" (toolCallId=toolu_012SaWXa2tNRMW8LWgWvVvB9)
+2026-08-10T09:00:31.794Z [INFO] Agent "recovery-planner": loaded 1 skill(s) into context
+2026-08-10T09:00:31.810Z [INFO]  
+2026-08-10T09:00:31.811Z [INFO] --- Start of group: configured settings: ---
+2026-08-10T09:00:31.811Z [INFO] --- End of group ---
+2026-08-10T09:00:31.816Z [INFO] --- Start of group: Completion request configuration:  ---
+2026-08-10T09:00:31.816Z [INFO] --- End of group ---
+2026-08-10T09:00:31.820Z [INFO]  
+2026-08-10T09:00:31.820Z [INFO] --- Start of group: configured settings: ---
+2026-08-10T09:00:31.820Z [INFO] --- End of group ---
+2026-08-10T09:01:07.276Z [INFO] notifySubagentComplete called for agent recovery-planner (toolu_012SaWXa2tNRMW8LWgWvVvB9), failed=false
+2026-08-10T09:01:16.163Z [INFO] SessionAgentExecutor.execute() called for "reporter" (toolCallId=toolu_01G6sphYDXVbSe9KpLUtbwzR)
+2026-08-10T09:01:16.200Z [INFO] Agent "reporter": loaded 1 skill(s) into context
+2026-08-10T09:01:16.217Z [INFO]  
+2026-08-10T09:01:16.217Z [INFO] --- Start of group: configured settings: ---
+2026-08-10T09:01:16.217Z [INFO] --- End of group ---
+2026-08-10T09:01:16.221Z [INFO] --- Start of group: Completion request configuration:  ---
+2026-08-10T09:01:16.221Z [INFO] --- End of group ---
+2026-08-10T09:01:16.224Z [INFO]  
+2026-08-10T09:01:16.225Z [INFO] --- Start of group: configured settings: ---
+2026-08-10T09:01:16.225Z [INFO] --- End of group ---
+2026-08-10T09:01:23.783Z [INFO] notifySubagentComplete called for agent reporter (toolu_01G6sphYDXVbSe9KpLUtbwzR), failed=false
+2026-08-10T09:01:29.317Z [INFO] Closing session 433d62c9-7d94-49c3-b1a5-cf47d86122f8
+2026-08-10T09:01:29.362Z [ERROR] Failed to shut down shell processes: Error: unknown taskRegistry handle 1
+2026-08-10T09:01:29.362Z [INFO] SessionAgentExecutor: success path reached for "risk-analyst", session=true, hasCallback=true
+2026-08-10T09:01:29.363Z [INFO] SessionAgentExecutor teardown: notifying subagent complete (failed=false, hasCallback=true)
+2026-08-10T09:01:29.363Z [INFO] SessionAgentExecutor: success path reached for "recovery-planner", session=true, hasCallback=true
+2026-08-10T09:01:29.363Z [INFO] SessionAgentExecutor teardown: notifying subagent complete (failed=false, hasCallback=true)
+2026-08-10T09:01:29.363Z [INFO] SessionAgentExecutor: success path reached for "reporter", session=true, hasCallback=true
+2026-08-10T09:01:29.363Z [INFO] SessionAgentExecutor teardown: notifying subagent complete (failed=false, hasCallback=true)
+2026-08-10T09:01:29.364Z [INFO] Destroyed session: 433d62c9-7d94-49c3-b1a5-cf47d86122f8
+2026-08-10T09:01:29.365Z [INFO] Preparing runtime for graceful shutdown
+2026-08-10T09:01:29.366Z [INFO] Starting graceful shutdown of CLI server
+2026-08-10T09:01:29.366Z [INFO] Destroying 0 active sessions
+2026-08-10T09:01:29.366Z [INFO] CLI server prepared for shutdown; transport remains open for RPC response
