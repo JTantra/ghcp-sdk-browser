@@ -44,28 +44,21 @@ async def readiness(_request: Request) -> PlainTextResponse:
 
 
 async def info(_request: Request) -> JSONResponse:
+    from .agents import OPS_BOARD_URL, catalogue
     from .telemetry import telemetry_status
 
     return JSONResponse(
         {
             "agent": "ghcp-sdk-browser",
+            "ops_board_url": OPS_BOARD_URL,
             # Reports whether spans can actually reach Application Insights.
             # Without this the exporter falls back to console and traces
             # vanish silently -- which looks identical to "tracing is broken".
             "telemetry": telemetry_status(),
-            "master_tools": [
-                "browser_navigate", "browser_read_table", "browser_read_text",
-                "browser_click", "browser_fill", "browser_wait_for",
-            ],
-            "subagents": [
-                {
-                    "name": a["name"],
-                    "model": a.get("model"),
-                    "tools": a.get("tools", []),
-                    "skills": a.get("skills", []),
-                }
-                for a in CUSTOM_AGENTS
-            ],
+            # Full tool + skill catalogue, read from the live tool definitions
+            # and the skills directory rather than hand-maintained here (the
+            # previous hardcoded list drifted from the real tools).
+            **catalogue(),
         }
     )
 
@@ -104,6 +97,11 @@ async def invocations(request: Request):
     if mode == "tool_result":
         hub.resolve_tool(body)
         return JSONResponse({"ok": True}, headers={"agent_session_id": session_id})
+
+    if mode == "info":
+        # /info is a GET, but the hosted proxy only relays POST /invocations,
+        # so the same payload is reachable here for remote diagnosis.
+        return await info(request)
 
     if mode == "end_session":
         # The extension calls this when the operator starts a new session, so

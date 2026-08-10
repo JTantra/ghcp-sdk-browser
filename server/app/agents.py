@@ -125,6 +125,81 @@ CUSTOM_AGENTS: list[dict[str, Any]] = [
 MASTER_EXCLUDED = ["ops_node_capacity", "ops_carrier_policy"]
 
 
+def _skill_catalogue() -> list[dict[str, Any]]:
+    """Read the skills directory so the catalogue cannot drift from reality."""
+    skills: list[dict[str, Any]] = []
+    if not SKILLS_DIR.is_dir():
+        return skills
+    for path in sorted(SKILLS_DIR.glob("*/SKILL.md")):
+        name, description = path.parent.name, ""
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            skills.append({"name": name, "description": "", "path": str(path)})
+            continue
+        # Minimal frontmatter read: avoids a YAML dependency for two keys.
+        if text.startswith("---"):
+            end = text.find("\n---", 3)
+            for line in text[3 : end if end > 0 else 0].splitlines():
+                key, _, value = line.partition(":")
+                key, value = key.strip(), value.strip().strip("\"'")
+                if key == "name" and value:
+                    name = value
+                elif key == "description" and value:
+                    description = value
+        used_by = [a["name"] for a in CUSTOM_AGENTS if path.parent.name in a.get("skills", [])]
+        skills.append({
+            "name": name,
+            "description": description,
+            "used_by": used_by,
+            "path": str(path.relative_to(SKILLS_DIR.parent)),
+        })
+    return skills
+
+
+def catalogue() -> dict[str, Any]:
+    """The agent's full tool + skill inventory.
+
+    Built from the live ``define_tool`` definitions and the skills directory,
+    so it stays truthful as those change. Foundry does not introspect a hosted
+    agent's in-process tools, so this endpoint is how the inventory is
+    published (see also scripts/publish_toolbox.sh for the MCP toolbox).
+    """
+    def describe(tools: list) -> list[dict[str, Any]]:
+        out = []
+        for t in tools:
+            spec = getattr(t, "spec", t)
+            out.append({
+                "name": getattr(spec, "name", None) or getattr(t, "name", "?"),
+                "description": getattr(spec, "description", None)
+                or getattr(t, "description", ""),
+            })
+        return out
+
+    browser = describe(browser_tools())
+    ops = describe(ops_tools())
+    return {
+        "model": COPILOT_MODEL,
+        "master": {
+            "tools": [t["name"] for t in browser],
+            "excluded_tools": MASTER_EXCLUDED,
+        },
+        "tools": browser + ops,
+        "skills": _skill_catalogue(),
+        "subagents": [
+            {
+                "name": a["name"],
+                "display_name": a.get("display_name"),
+                "description": a.get("description"),
+                "model": a.get("model"),
+                "tools": a.get("tools", []),
+                "skills": a.get("skills", []),
+            }
+            for a in CUSTOM_AGENTS
+        ],
+    }
+
+
 class AgentRunner:
     """Owns one CopilotClient and one session per relay session id."""
 
