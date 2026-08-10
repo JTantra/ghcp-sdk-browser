@@ -38,8 +38,6 @@ services:
         protocols:
             - protocol: invocations
               version: 1.0.0
-            - protocol: invocations_ws
-              version: 1.0.0
     jtantra-test-foundry:
         host: azure.ai.project
         endpoint: https://jtantra-test-foundry.services.ai.azure.com/api/projects/jtantra-test-foundry

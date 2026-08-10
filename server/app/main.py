@@ -6,8 +6,8 @@ Contract (hosted-agent runtime):
   - POST /invocations -> the agent protocol endpoint
   - graceful shutdown on SIGTERM
 
-Plus a WebSocket at /ws/agent used by the browser extension. The extension is
-the tool executor; this server only reasons.
+The browser extension attaches over HTTPS+SSE on the same /invocations path
+(see sse.py). It is the tool executor; this server only reasons.
 """
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import uuid
 from collections.abc import AsyncIterator
 
@@ -23,14 +22,13 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, StreamingResponse
-from starlette.routing import Route, WebSocketRoute
-from starlette.websockets import WebSocket, WebSocketDisconnect
+from starlette.routing import Route
 
 from .agents import CUSTOM_AGENTS, runner
 from .config import PORT
 from .hub import hub
 from .sse import SSE_HEADERS, SseSink, probe_stream
-from .telemetry import setup_tracing, tracer
+from .telemetry import remember_trace_context, setup_tracing, tracer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -76,6 +74,8 @@ async def invocations(request: Request):
         mode=attach       -> long-lived SSE stream (the tool_call channel)
         mode=tool_result  -> resolves a pending tool call
         mode=prompt       -> starts a turn, output arrives on the SSE stream
+        mode=info         -> tool/skill catalogue + telemetry status
+        mode=end_session  -> release the Copilot session
         mode=probe        -> streaming-vs-buffering diagnostic
         (absent)          -> classic request/response, unchanged
 
@@ -86,6 +86,12 @@ async def invocations(request: Request):
     session_id = request.query_params.get("agent_session_id") or uuid.uuid4().hex
     body = await request.json()
     mode = body.get("mode")
+
+    # Adopt the platform's trace context from the inbound W3C traceparent
+    # header. Without this every span we create starts a NEW trace, so the
+    # portal -- which roots its Traces view on the platform's `invoke_agent`
+    # request -- never shows our spans even though they reach App Insights.
+    remember_trace_context(session_id, request.headers)
 
     if mode == "probe":
         # Deliberately not session-bound: answers one question, costs nothing.
@@ -214,59 +220,6 @@ async def debug_tool(request: Request) -> JSONResponse:
     return JSONResponse({"tool": name, "output": json.loads(output)})
 
 
-async def ws_agent(websocket: WebSocket) -> None:
-    """The extension connects here and becomes the tool executor.
-
-    Route is ``/invocations_ws`` because that is the ONLY WebSocket path the
-    Foundry hosted-agent proxy will relay -- arbitrary paths are not routed.
-
-    Session resolution follows the platform contract: prefer the injected
-    ``FOUNDRY_AGENT_SESSION_ID``, else the ``agent_session_id`` query param
-    (the platform forwards unknown query params unchanged), else generate one.
-    The legacy ``session`` param is still accepted for local development.
-    """
-    session_id = (
-        os.getenv("FOUNDRY_AGENT_SESSION_ID")
-        or websocket.query_params.get("agent_session_id")
-        or websocket.query_params.get("session")
-        or uuid.uuid4().hex
-    )
-    await websocket.accept()
-    hub.attach(session_id, websocket)
-    await websocket.send_text(json.dumps({"type": "connected", "session_id": session_id}))
-
-    try:
-        while True:
-            raw = await websocket.receive_text()
-            msg = json.loads(raw)
-            kind = msg.get("type")
-
-            if kind == "tool_result":
-                hub.resolve_tool(msg)
-
-            elif kind == "prompt":
-                text = msg.get("text", "")
-                await websocket.send_text(json.dumps({"type": "turn_started"}))
-                try:
-                    answer = await runner.ask(session_id, text)
-                    await websocket.send_text(
-                        json.dumps({"type": "turn_finished", "text": answer})
-                    )
-                except Exception as exc:  # noqa: BLE001 - surface to the UI
-                    log.exception("turn failed")
-                    await websocket.send_text(
-                        json.dumps({"type": "error", "message": str(exc)})
-                    )
-
-            elif kind == "ping":
-                await websocket.send_text(json.dumps({"type": "pong"}))
-
-    except WebSocketDisconnect:
-        pass
-    finally:
-        hub.detach(session_id)
-
-
 @contextlib.asynccontextmanager
 async def lifespan(_app: Starlette) -> AsyncIterator[None]:
     """Startup/shutdown. Starlette >=1.0 removed on_startup/on_shutdown."""
@@ -285,9 +238,6 @@ app = Starlette(
         Route("/info", info, methods=["GET"]),
         Route("/invocations", invocations, methods=["POST"]),
         Route("/debug/tool", debug_tool, methods=["POST"]),
-        WebSocketRoute("/invocations_ws", ws_agent),
-        # Legacy local-dev alias; the hosted proxy only relays /invocations_ws.
-        WebSocketRoute("/ws/agent", ws_agent),
     ],
     lifespan=lifespan,
 )

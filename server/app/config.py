@@ -6,6 +6,8 @@ from pathlib import Path
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
 SKILLS_DIR = SERVER_DIR / "skills"
+#: Declarative agent topology (master prompt, subagents, models, tools, skills).
+AGENTS_FILE = Path(os.getenv("AGENTS_FILE", str(SERVER_DIR / "agents.json")))
 
 PORT = int(os.getenv("PORT", "8088"))
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")

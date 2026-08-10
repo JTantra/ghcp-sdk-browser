@@ -145,7 +145,9 @@ $("disconnect").onclick = () => {
   chrome.runtime.sendMessage({ type: "disconnect" });
 };
 
-let localBackendUrl = "ws://127.0.0.1:8088/invocations_ws";
+// Overwritten from the worker's get_status response; transport is HTTPS+SSE,
+// never WebSocket (a browser cannot set Authorization on a WS upgrade).
+let localBackendUrl = "http://127.0.0.1:8088/invocations";
 
 $("uselocal").onclick = () => {
   backend.value = localBackendUrl;

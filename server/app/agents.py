@@ -16,8 +16,16 @@ from typing import Any
 
 from copilot import CopilotClient
 
-from .browser_tools import bind_session, browser_tools
+from opentelemetry.trace import set_span_in_context
+
+from .browser_tools import (
+    bind_session,
+    browser_tools,
+    clear_tool_parent,
+    set_tool_parent,
+)
 from .config import (
+    AGENTS_FILE,
     COPILOT_HOME,
     COPILOT_MODEL,
     FOUNDRY_AGENT_NAME,
@@ -26,7 +34,7 @@ from .config import (
 )
 from .hub import hub
 from .ops_tools import ops_tools
-from .telemetry import flush, tracer
+from .telemetry import flush, session_context, tracer
 
 log = logging.getLogger("agents")
 
@@ -36,93 +44,42 @@ log = logging.getLogger("agents")
 #: fail with a permissions error and ask the operator for a URL.
 OPS_BOARD_URL = os.getenv("OPS_BOARD_URL", "http://localhost:5055")
 
-MASTER_PROMPT = f"""You are the Fleet Operations orchestrator.
 
-You are the only agent with browser tools. The browser runs inside the
-operator's authenticated session, so you can read pages they are signed in to.
+def _load_agent_config() -> dict[str, Any]:
+    """Read the declarative agent topology from agents.json.
 
-The operations console (the "ops board" / "shipment board") is always at:
+    Kept out of Python so the prompt, subagents, models, tools and skills can
+    be reviewed and changed in one readable place. Keys beginning with
+    ``$comment`` are documentation and are ignored.
+    """
+    with AGENTS_FILE.open(encoding="utf-8") as fh:
+        raw = json.load(fh)
 
-    {OPS_BOARD_URL}
+    def clean(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {k: clean(v) for k, v in obj.items() if not k.startswith("$comment")}
+        if isinstance(obj, list):
+            return [clean(v) for v in obj]
+        return obj
 
-Never ask the operator for its URL. If the active tab is not already on that
-page -- including when it is a file:// path, a blank tab, or anything else --
-call `browser_navigate` with exactly {OPS_BOARD_URL} and carry on. A file://
-tab cannot be read for security reasons, so navigating is the correct fix
-rather than reporting failure.
+    return clean(raw)
 
-Useful selectors on that page:
-  #shipments  the shipment table   (use browser_read_table)
-  #filter     status filter select (use browser_fill, then click #apply)
-  #detail     detail pane revealed by clicking a shipment row
 
-Your job:
-1. Use browser tools to gather data from the operations console.
-2. Delegate analysis to your subagents -- never do their work yourself:
-   - `risk-analyst` scores shipment risk
-   - `recovery-planner` proposes recovery levers
-   - `reporter` formats the final brief
-3. Return the reporter's markdown brief as your final answer, unchanged.
+_CONFIG = _load_agent_config()
 
-Rules:
-- Read data before reasoning about it. Never invent a shipment or a number.
-- Pass structured JSON between subagents, not prose summaries.
-- If a browser tool fails, say which tool and why. Do not silently guess.
-"""
+#: Prompt lines are stored as a JSON array purely for readability.
+MASTER_PROMPT = "\n".join(_CONFIG["master"]["prompt"]).format(
+    ops_board_url=OPS_BOARD_URL
+)
 
-CUSTOM_AGENTS: list[dict[str, Any]] = [
-    {
-        "name": "risk-analyst",
-        "display_name": "Risk Analyst",
-        "description": (
-            "Scores shipment delay risk from ops-board rows. Use when you have "
-            "shipment data and need risk scores and bands."
-        ),
-        "prompt": (
-            "You score shipment operational risk. Apply the risk-scoring skill "
-            "exactly as written. Return strict JSON only -- no prose, no markdown "
-            "fences. Never score a shipment that was not in your input."
-        ),
-        "skills": ["risk-scoring"],
-        "tools": [],
-        "model": "claude-sonnet-5",
-    },
-    {
-        "name": "recovery-planner",
-        "display_name": "Recovery Planner",
-        "description": (
-            "Proposes schedule-recovery options for at-risk shipments. Use after "
-            "risk scoring, for shipments in the critical or elevated bands."
-        ),
-        "prompt": (
-            "You plan schedule recovery. Apply the recovery-playbook skill. "
-            "You MUST call ops_node_capacity before recommending crane "
-            "reallocation. Return strict JSON only."
-        ),
-        "skills": ["recovery-playbook"],
-        "tools": ["ops_node_capacity", "ops_carrier_policy"],
-        "model": "claude-sonnet-5",
-    },
-    {
-        "name": "reporter",
-        "display_name": "Reporter",
-        "description": (
-            "Formats scored shipments and recovery options into the standard "
-            "markdown recovery brief. Use last, once analysis is complete."
-        ),
-        "prompt": (
-            "You format operations briefs. Apply the report-format skill exactly. "
-            "Output markdown only. Every number must come from your input."
-        ),
-        "skills": ["report-format"],
-        "tools": [],
-        "model": "claude-haiku-4.5",
-    },
-]
+CUSTOM_AGENTS: list[dict[str, Any]] = _CONFIG["subagents"]
+
+#: Master model. Env wins (deployment override), then agents.json.
+MODEL = os.getenv("COPILOT_MODEL") or _CONFIG.get("model") or COPILOT_MODEL
 
 # Analysis tools live on subagents only. Excluding them from the default agent
 # forces the master to delegate and keeps its context lean.
-MASTER_EXCLUDED = ["ops_node_capacity", "ops_carrier_policy"]
+MASTER_EXCLUDED: list[str] = _CONFIG["master"]["excluded_tools"]
 
 
 def _skill_catalogue() -> list[dict[str, Any]]:
@@ -179,7 +136,7 @@ def catalogue() -> dict[str, Any]:
     browser = describe(browser_tools())
     ops = describe(ops_tools())
     return {
-        "model": COPILOT_MODEL,
+        "model": MODEL,
         "master": {
             "tools": [t["name"] for t in browser],
             "excluded_tools": MASTER_EXCLUDED,
@@ -264,7 +221,7 @@ class AgentRunner:
 
             assert self._client is not None
             session = await self._client.create_session(
-                model=COPILOT_MODEL,
+                model=MODEL,
                 streaming=True,
                 # Without this the SDK reports only the MASTER's stream, so a
                 # subagent's work is invisible between `subagent.started` and
@@ -325,9 +282,21 @@ class AgentRunner:
         tool_names: dict[str, str] = {}
         #: reasoning_id -> accumulated reasoning text (delta-only models).
         reasoning_buf: dict[str, str] = {}
-        turn_ctx = tracer().start_as_current_span(
-            f"invoke_agent {FOUNDRY_AGENT_NAME}"
+
+        # Root this turn in the PLATFORM's trace when we captured its
+        # traceparent, so Foundry shows our spans under its `invoke_agent`
+        # request instead of in a separate, invisible trace.
+        parent_ctx = session_context(relay_session)
+        turn_span = tracer().start_span(
+            f"invoke_agent {FOUNDRY_AGENT_NAME}", context=parent_ctx
         )
+        # Explicit context object: the turn runs in a detached asyncio task, and
+        # OTel's implicit context does not cross that boundary -- which is why
+        # tool spans previously formed their own traces.
+        turn_ctx = set_span_in_context(turn_span)
+        # browser/ops tool handlers run under the SDK's own tasks, so they read
+        # the parent from here rather than from the ambient context.
+        set_tool_parent(relay_session, turn_ctx)
 
         def emit(payload: dict) -> None:
             """Push one discrete frame to the panel."""
@@ -336,7 +305,9 @@ class AgentRunner:
         def open_span(key: str, name: str, attrs: dict) -> None:
             if not key or key in spans:
                 return
-            span = tracer().start_span(name)
+            # Parent explicitly: these are created from the SDK's event
+            # callback, where the ambient context is not our turn.
+            span = tracer().start_span(name, context=turn_ctx)
             for k, v in attrs.items():
                 if v is not None:
                     span.set_attribute(k, v)
@@ -561,16 +532,17 @@ class AgentRunner:
         unsubscribe = session.on(dispatch)
 
         try:
-            with turn_ctx as span:
-                span.set_attribute("gen_ai.operation.name", "invoke_agent")
-                span.set_attribute("gen_ai.agent.name", FOUNDRY_AGENT_NAME)
-                span.set_attribute("gen_ai.request.model", COPILOT_MODEL)
-                span.set_attribute("gen_ai.conversation.id", relay_session)
-                span.set_attribute("gen_ai.input.messages", prompt[:4000])
-                await session.send(prompt=prompt)
-                await done.wait()
-                answer = "".join(chunks).strip()
-                span.set_attribute("gen_ai.output.messages", answer[:4000])
+            span = turn_span
+            span.set_attribute("gen_ai.operation.name", "invoke_agent")
+            span.set_attribute("gen_ai.agent.name", FOUNDRY_AGENT_NAME)
+            span.set_attribute("gen_ai.agent.id", FOUNDRY_AGENT_NAME)
+            span.set_attribute("gen_ai.request.model", MODEL)
+            span.set_attribute("gen_ai.conversation.id", relay_session)
+            span.set_attribute("gen_ai.input.messages", prompt[:4000])
+            await session.send(prompt=prompt)
+            await done.wait()
+            answer = "".join(chunks).strip()
+            span.set_attribute("gen_ai.output.messages", answer[:4000])
         finally:
             # Without this, every turn stacks another handler on the session.
             unsubscribe()
@@ -578,6 +550,8 @@ class AgentRunner:
             # which Foundry renders as a trace that never completes.
             for key in list(spans):
                 close_span(key, {"error.type": "turn ended before completion"})
+            turn_span.end()
+            clear_tool_parent(relay_session)
             # Ship them now rather than waiting on the 5s batch window; the
             # container can be scaled down between turns.
             flush()

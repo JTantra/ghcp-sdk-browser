@@ -56,10 +56,12 @@ def _relay(tool_name: str):
         args = inv.arguments if isinstance(inv.arguments, dict) else {}
         session_id = _SESSION_BINDING.get(inv.session_id, inv.session_id)
         # Named per the OTel GenAI semantic conventions ("execute_tool {name}")
-        # so Foundry's agent view renders this as a tool step. A custom span
-        # name like "browser.x" is ingested but not recognised, which is why
-        # these did not previously appear alongside invoke_agent.
-        with tracer().start_as_current_span(f"execute_tool {tool_name}") as span:
+        # so Foundry's agent view renders this as a tool step, and parented
+        # explicitly to the turn -- the SDK calls this from its own task, where
+        # the ambient OTel context is not the turn's.
+        with tracer().start_as_current_span(
+            f"execute_tool {tool_name}", context=_TOOL_PARENT.get(session_id)
+        ) as span:
             span.set_attribute("gen_ai.operation.name", "execute_tool")
             span.set_attribute("gen_ai.tool.name", tool_name)
             span.set_attribute("gen_ai.tool.type", "browser")
@@ -74,6 +76,21 @@ def _relay(tool_name: str):
 
 # Copilot session id -> relay session id. Populated by agents.py at session start.
 _SESSION_BINDING: dict[str, str] = {}
+
+#: relay session id -> the OTel context of the in-flight turn.
+#: Tool handlers are invoked from the SDK's own tasks, where the ambient
+#: context is NOT the turn, so the parent has to be looked up explicitly.
+#: Without this each tool span started its own trace and never appeared under
+#: the turn in Foundry.
+_TOOL_PARENT: dict[str, Any] = {}
+
+
+def set_tool_parent(relay_session_id: str, ctx: Any) -> None:
+    _TOOL_PARENT[relay_session_id] = ctx
+
+
+def clear_tool_parent(relay_session_id: str) -> None:
+    _TOOL_PARENT.pop(relay_session_id, None)
 
 
 def bind_session(copilot_session_id: str, relay_session_id: str) -> None:
