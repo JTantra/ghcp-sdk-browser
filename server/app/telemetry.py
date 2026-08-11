@@ -16,14 +16,11 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Mapping
 
 from opentelemetry import trace
-from opentelemetry.context import Context
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from .config import FOUNDRY_AGENT_NAME, FOUNDRY_AGENT_VERSION
 
@@ -143,48 +140,16 @@ def tracer():
     return trace.get_tracer("ghcp-sdk-browser")
 
 
-# ---------------------------------------------------------------------------
-# Trace-context propagation
-# ---------------------------------------------------------------------------
-# Foundry roots its Traces view on the platform's `invoke_agent` request
-# (cloud_RoleName=agentsv2). A child span appears there only if it shares that
-# request's trace id. Two things previously broke that:
+# NOTE: the manual trace-context plumbing that used to live here
+# (remember_trace_context / session_context / forget_trace_context and a
+# session->Context dict) is gone. It tried to extract the inbound traceparent
+# and re-attach it to a turn running on a detached asyncio task, keyed by
+# session id -- and silently missed, so every span started a new trace.
 #
-#   1. The inbound W3C `traceparent` header was never extracted, so every span
-#      began a brand-new trace.
-#   2. A turn runs in a detached asyncio task (start_turn creates one so the
-#      HTTP response can return 202), and OTel context does NOT cross that
-#      boundary -- so even our own tool spans did not nest under our turn span.
-#
-# Measured before the fix: 0 shared operation_Ids between the platform's spans
-# and ours, and 14 distinct trace ids for what should have been ~3 traces.
+# InvocationAgentServerHost's TraceContextMiddleware now attaches the inbound
+# W3C context as the AMBIENT OTel context for the request, and asyncio tasks
+# inherit contextvars, so spans nest under the platform's `invoke_agent`
+# with no bookkeeping from us. Verified: an injected traceparent came back on
+# spans from BOTH cloud_RoleName=agentsv2 and cloud_RoleName=ghcp-sdk-browser.
 
-#: relay session id -> the platform trace context for that session.
-_SESSION_CONTEXT: dict[str, Context] = {}
-
-
-def remember_trace_context(session_id: str, headers: Mapping[str, str]) -> None:
-    """Extract the inbound traceparent and pin it to this session.
-
-    Stored per session because the turn is executed later, on a different
-    task, once the originating request has already returned.
-    """
-    try:
-        carrier = {k.lower(): v for k, v in headers.items()}
-        if "traceparent" not in carrier:
-            return
-        ctx = TraceContextTextMapPropagator().extract(carrier=carrier)
-        if trace.get_current_span(ctx).get_span_context().is_valid:
-            _SESSION_CONTEXT[session_id] = ctx
-    except Exception:  # noqa: BLE001 - propagation must never break a request
-        log.debug("could not extract trace context", exc_info=True)
-
-
-def session_context(session_id: str) -> Context | None:
-    """The platform trace context for a session, if we captured one."""
-    return _SESSION_CONTEXT.get(session_id)
-
-
-def forget_trace_context(session_id: str) -> None:
-    _SESSION_CONTEXT.pop(session_id, None)
 

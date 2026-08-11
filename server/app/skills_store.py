@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import threading
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -49,6 +50,9 @@ _state: dict[str, Any] = {"source": "image", "skills": [], "error": None}
 #: Resolved once per process. Skills are project-scoped, so re-downloading for
 #: every session would add latency to each new conversation for no benefit.
 _resolved: list[str] | None = None
+
+#: Guards the fetch: /info and session creation can race from separate threads.
+_lock = threading.Lock()
 
 
 def skills_status() -> dict[str, Any]:
@@ -175,6 +179,18 @@ def resolve_skill_directories(refresh: bool = False) -> list[str]:
     if _resolved is not None and not refresh:
         return _resolved
 
+    # /info and session creation can both call this at once, from different
+    # threads (each goes through asyncio.to_thread). Without the lock both
+    # download into the same directory and both append to _state["skills"],
+    # which is why /info reported every skill twice.
+    with _lock:
+        if _resolved is not None and not refresh:
+            return _resolved
+        return _resolve_locked()
+
+
+def _resolve_locked() -> list[str]:
+    global _resolved
     fallback = [str(SKILLS_DIR)]
     if not FOUNDRY_SKILLS_ENABLED:
         _state.update(source="image", skills=[], error="disabled via FOUNDRY_SKILLS_ENABLED=0")

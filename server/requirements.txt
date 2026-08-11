@@ -1,7 +1,6 @@
 github-copilot-sdk==1.0.8
 starlette>=0.41
 uvicorn[standard]>=0.32
-websockets>=13.0
 azure-monitor-opentelemetry-exporter>=1.0.0b30
 # Required by skills_store to authenticate to the Foundry data plane with the
 # container's managed identity. Without it the app raises ImportError at

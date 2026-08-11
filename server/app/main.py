@@ -37,7 +37,7 @@ from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
-from .agents import CUSTOM_AGENTS, runner
+from .agents import runner
 from .config import PORT
 from .hub import hub
 from .sse import SSE_HEADERS, SseSink, probe_stream
