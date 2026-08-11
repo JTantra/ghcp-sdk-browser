@@ -22,6 +22,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server/app ./app
 COPY server/skills ./skills
+# Declarative agent topology (master prompt, subagents, models, tools, skills).
+# agents.py opens this at MODULE LOAD, so omitting it raises FileNotFoundError
+# before uvicorn binds -- /readiness never answers and every session fails with
+# `session_not_ready`.
+COPY server/agents.json ./agents.json
 
 # Non-root: the platform mounts $HOME as the session filesystem.
 RUN useradd -m -u 1000 agent && chown -R agent:agent /app
