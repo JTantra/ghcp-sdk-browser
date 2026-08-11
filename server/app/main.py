@@ -6,6 +6,20 @@ Contract (hosted-agent runtime):
   - POST /invocations -> the agent protocol endpoint
   - graceful shutdown on SIGTERM
 
+Built on ``InvocationAgentServerHost`` (azure-ai-agentserver-invocations), the
+documented hosting path. It is itself a Starlette subclass, so our extra routes
+still work -- but we now inherit three things a hand-rolled app has to fake:
+
+  * ``TraceContextMiddleware`` attaches the inbound W3C trace context as the
+    AMBIENT OTel context, so every span created during a request is
+    automatically a child of the platform's trace. This is what makes spans
+    show up under `invoke_agent` in the Foundry portal. Our previous approach
+    stashed the traceparent in a dict keyed by session and looked it up from a
+    detached task -- which silently missed and root-ed every span.
+  * ``configure_observability`` wires the exporters and GenAI semconv.
+  * ``request.state.session_id``, resolved from the query param OR the
+    platform's FOUNDRY_AGENT_SESSION_ID env var.
+
 The browser extension attaches over HTTPS+SSE on the same /invocations path
 (see sse.py). It is the tool executor; this server only reasons.
 """
@@ -19,16 +33,15 @@ import uuid
 from collections.abc import AsyncIterator
 
 import uvicorn
-from starlette.applications import Starlette
+from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, StreamingResponse
-from starlette.routing import Route
 
-from .agents import CUSTOM_AGENTS, runner
+from .agents import runner
 from .config import PORT
 from .hub import hub
 from .sse import SSE_HEADERS, SseSink, probe_stream
-from .telemetry import remember_trace_context, setup_tracing, tracer
+from .telemetry import setup_tracing, tracer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -97,11 +110,9 @@ async def invocations(request: Request):
     body = await request.json()
     mode = body.get("mode")
 
-    # Adopt the platform's trace context from the inbound W3C traceparent
-    # header. Without this every span we create starts a NEW trace, so the
-    # portal -- which roots its Traces view on the platform's `invoke_agent`
-    # request -- never shows our spans even though they reach App Insights.
-    remember_trace_context(session_id, request.headers)
+    # No remember_trace_context() here: TraceContextMiddleware has already
+    # attached the inbound W3C context as the AMBIENT OTel context, so any span
+    # started below is a child of the platform's trace automatically.
 
     if mode == "probe":
         # Deliberately not session-bound: answers one question, costs nothing.
@@ -230,27 +241,43 @@ async def debug_tool(request: Request) -> JSONResponse:
     return JSONResponse({"tool": name, "output": json.loads(output)})
 
 
+# The host owns POST /invocations and GET /readiness; our own routes are added
+# on top because AgentServerHost subclasses Starlette. Note /readiness is NOT
+# re-declared -- the host provides it, and duplicating it would shadow the
+# platform's health contract.
+app = InvocationAgentServerHost()
+
+
+# The host builds its own lifespan and rejects a `lifespan=` kwarg; Starlette
+# 1.x removed both `on_event` and `Router.on_startup`. So WRAP the host's
+# lifespan rather than replace it -- its startup logging and shutdown handling
+# still run, with ours nested inside.
+_host_lifespan = app.router.lifespan_context
+
+
 @contextlib.asynccontextmanager
-async def lifespan(_app: Starlette) -> AsyncIterator[None]:
-    """Startup/shutdown. Starlette >=1.0 removed on_startup/on_shutdown."""
-    setup_tracing()
-    log.info("ghcp-sdk-browser listening on :%d", PORT)
-    try:
-        yield
-    finally:
-        await runner.stop()
-        log.info("shutdown complete")
+async def _lifespan(scope) -> AsyncIterator[None]:
+    async with _host_lifespan(scope):
+        setup_tracing()
+        log.info("ghcp-sdk-browser listening on :%d", PORT)
+        try:
+            yield
+        finally:
+            await runner.stop()
+            log.info("shutdown complete")
 
 
-app = Starlette(
-    routes=[
-        Route("/readiness", readiness, methods=["GET"]),
-        Route("/info", info, methods=["GET"]),
-        Route("/invocations", invocations, methods=["POST"]),
-        Route("/debug/tool", debug_tool, methods=["POST"]),
-    ],
-    lifespan=lifespan,
-)
+app.router.lifespan_context = _lifespan
+
+
+@app.invoke_handler
+async def _invoke(request: Request):
+    """POST /invocations, dispatched by mode (see `invocations`)."""
+    return await invocations(request)
+
+
+app.add_route("/info", info, methods=["GET"])
+app.add_route("/debug/tool", debug_tool, methods=["POST"])
 
 
 if __name__ == "__main__":
