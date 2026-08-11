@@ -316,16 +316,60 @@ class AgentRunner:
         # the parent from here rather than from the ambient context.
         set_tool_parent(relay_session, turn_ctx)
 
+        # agent_id -> the OTel context to parent that agent's spans under.
+        # Every SessionEvent carries an optional `agent_id` naming the agent
+        # that emitted it, so a subagent's tool calls can nest UNDER the
+        # subagent span instead of being flattened as siblings of it. Without
+        # this the portal shows `invoke_agent risk-analyst` as an empty box
+        # with its work hanging off the turn beside it.
+        agent_ctx: dict[str, Any] = {}
+
+        def _event_agent_id(event: Any) -> str:
+            """Which agent emitted this event, if the SDK said.
+
+            Every ``SessionEvent`` envelope has an optional ``agent_id``
+            (``agentId`` on the wire) naming the emitting agent -- that is what
+            lets a subagent's tool calls be nested under the subagent instead
+            of flattened beside it.
+            """
+            val = getattr(event, "agent_id", None)
+            if val is None and isinstance(event, dict):
+                val = event.get("agent_id") or event.get("agentId")
+            return str(val) if val else ""
+
+        def parent_ctx_for(agent_id: str):
+            """Context to hang a span under: the subagent's, else the turn."""
+            return agent_ctx.get(agent_id, turn_ctx) if agent_id else turn_ctx
+
+        #: agent_id -> the open span for that subagent, so its streamed
+        #: output/reasoning can be attached to the right box.
+        agent_spans: dict[str, Any] = {}
+
+        def _record_agent_output(agent_id: str, text: str) -> None:
+            """Attach a subagent's answer to its own span."""
+            span = agent_spans.get(agent_id)
+            if span is None or not text:
+                return
+            span.set_attribute("gen_ai.output.messages", text[:4000])
+            span.add_event("gen_ai.assistant.message", {"content": text[:2000]})
+
+        def _record_agent_reasoning(agent_id: str, text: str) -> None:
+            """Attach a subagent's thinking to its own span as a timed event."""
+            span = agent_spans.get(agent_id)
+            if span is None or not text:
+                return
+            span.add_event("gen_ai.reasoning", {"content": text[:2000]})
+
         def emit(payload: dict) -> None:
             """Push one discrete frame to the panel."""
             loop.create_task(hub.send(relay_session, payload))
 
-        def open_span(key: str, name: str, attrs: dict) -> None:
+        def open_span(key: str, name: str, attrs: dict, ctx=None) -> None:
             if not key or key in spans:
                 return
             # Parent explicitly: these are created from the SDK's event
             # callback, where the ambient context is not our turn.
-            span = tracer().start_span(name, context=turn_ctx)
+            span = tracer().start_span(name, context=ctx or turn_ctx)
             for k, v in attrs.items():
                 if v is not None:
                     span.set_attribute(k, v)
@@ -419,6 +463,11 @@ class AgentRunner:
                 text = _message_text(event)
                 if text:
                     emit({"type": "assistant_message", "text": text})
+                # Attach a subagent's own output to ITS span. This is the
+                # "what is it actually doing" that a bare invoke_agent box
+                # cannot answer: include_sub_agent_streaming_events=True means
+                # these arrive tagged with the subagent's agent_id.
+                _record_agent_output(_event_agent_id(event), text)
 
             # ---- reasoning ("thought process") ----------------------------
             # Its own frame type so the panel can render it as a separate,
@@ -427,6 +476,7 @@ class AgentRunner:
                 text = as_text(f("content"))
                 if text:
                     emit({"type": "reasoning", "text": text})
+                _record_agent_reasoning(_event_agent_id(event), text)
 
             elif etype == "assistant.reasoning_delta":
                 # Some models stream reasoning only as deltas and never send a
@@ -463,6 +513,23 @@ class AgentRunner:
                         "gen_ai.conversation.id": relay_session,
                     },
                 )
+                # Register this subagent's context so its own tool calls and
+                # messages nest UNDER it. SubagentStartedData has no agent_id
+                # field -- the subagent is keyed by the tool_call_id that
+                # spawned it, and the SessionEvent envelope's `agent_id` on
+                # subsequent events is what we match against.
+                sub_span = spans.get(f"sub:{f('tool_call_id')}")
+                sub_id = _event_agent_id(event) or str(f("tool_call_id") or "")
+                if sub_span is not None and sub_id:
+                    agent_ctx[sub_id] = set_span_in_context(sub_span)
+                    agent_spans[sub_id] = sub_span
+                # Whether nesting works hinges on the envelope agent_id of
+                # LATER events matching this key. Logged so one real run
+                # confirms it instead of us assuming.
+                log.info(
+                    "subagent %s started: key=%s envelope_agent_id=%r tool_call_id=%r",
+                    name, sub_id, _event_agent_id(event), f("tool_call_id"),
+                )
 
             elif etype == "subagent.completed":
                 name = as_text(f("agent_display_name")) or as_text(f("agent_name")) or "subagent"
@@ -478,8 +545,14 @@ class AgentRunner:
                     {
                         "gen_ai.usage.total_tokens": _num(f("total_tokens")),
                         "gen_ai.agent.tool_calls": _num(f("total_tool_calls")),
+                        "gen_ai.request.model": as_text(f("model")),
                     },
                 )
+                # SubagentCompletedData carries no agent_id -- the subagent is
+                # identified by the tool_call_id that spawned it.
+                _sub_key = str(f("tool_call_id") or "")
+                agent_ctx.pop(_sub_key, None)
+                agent_spans.pop(_sub_key, None)
 
             elif etype == "subagent.failed":
                 emit({
@@ -510,7 +583,12 @@ class AgentRunner:
                         "gen_ai.tool.call.id": str(f("tool_call_id") or ""),
                         "gen_ai.tool.description": as_text(f("tool_description")),
                         "gen_ai.conversation.id": relay_session,
+                        # Which agent ran it -- lets you filter a subagent's
+                        # tool calls in the portal even when flattened.
+                        "gen_ai.agent.id": _event_agent_id(event) or FOUNDRY_AGENT_NAME,
                     },
+                    # Nest under the owning subagent when the SDK names one.
+                    ctx=parent_ctx_for(_event_agent_id(event)),
                 )
 
             elif etype == "tool.execution_complete":
