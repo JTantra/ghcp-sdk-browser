@@ -3,5 +3,10 @@ starlette>=0.41
 uvicorn[standard]>=0.32
 websockets>=13.0
 azure-monitor-opentelemetry-exporter>=1.0.0b30
+# Required by skills_store to authenticate to the Foundry data plane with the
+# container's managed identity. Without it the app raises ImportError at
+# module load, uvicorn never binds, /readiness never answers, and every
+# session fails with `session_not_ready`.
+azure-identity>=1.19
 opentelemetry-sdk>=1.27
 opentelemetry-api>=1.27

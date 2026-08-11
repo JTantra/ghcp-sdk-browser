@@ -59,12 +59,20 @@ def skills_status() -> dict[str, Any]:
 def _token() -> str:
     """Bearer token for the Foundry data plane via the container's identity.
 
-    ``DefaultAzureCredential`` walks a long chain of sources and, when managed
-    identity is not reachable, IMDS probes can stall for minutes -- long past
-    the platform's session-ready timeout. Prefer the container's managed
-    identity directly and bound the attempt.
+    ``azure.identity`` is imported lazily and defensively: an ImportError here
+    must degrade to image skills, never take down the whole app. (It once did:
+    the package was missing from requirements.txt, so importing this module
+    killed uvicorn before it bound, /readiness never answered, and every
+    session failed with `session_not_ready`.)
+
+    ``DefaultAzureCredential`` also walks a long chain of sources and, when
+    managed identity is unreachable, IMDS probes stall for minutes -- far past
+    the platform's session timeout. Prefer managed identity directly.
     """
-    from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
+    try:
+        from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
+    except ImportError as exc:  # pragma: no cover - depends on image contents
+        raise RuntimeError(f"azure-identity unavailable: {exc}") from exc
 
     try:
         return ManagedIdentityCredential().get_token(
