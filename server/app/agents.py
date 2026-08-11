@@ -521,8 +521,14 @@ class AgentRunner:
                 sub_span = spans.get(f"sub:{f('tool_call_id')}")
                 sub_id = _event_agent_id(event) or str(f("tool_call_id") or "")
                 if sub_span is not None and sub_id:
-                    agent_ctx[sub_id] = set_span_in_context(sub_span)
+                    sub_ctx = set_span_in_context(sub_span)
+                    agent_ctx[sub_id] = sub_ctx
                     agent_spans[sub_id] = sub_span
+                    # Point the TOOL handlers at this subagent too: they span
+                    # their own execution and read the parent from
+                    # _TOOL_PARENT, so without this their spans keep hanging
+                    # off the turn and the subagent stays an empty box.
+                    set_tool_parent(relay_session, sub_ctx)
                 # Whether nesting works hinges on the envelope agent_id of
                 # LATER events matching this key. Logged so one real run
                 # confirms it instead of us assuming.
@@ -553,6 +559,9 @@ class AgentRunner:
                 _sub_key = str(f("tool_call_id") or "")
                 agent_ctx.pop(_sub_key, None)
                 agent_spans.pop(_sub_key, None)
+                # Hand tool spans back to the turn; subagents run one at a
+                # time, so the turn is the correct parent once this one ends.
+                set_tool_parent(relay_session, turn_ctx)
 
             elif etype == "subagent.failed":
                 emit({
@@ -561,8 +570,19 @@ class AgentRunner:
                     "error": as_text(f("error")) or "failed",
                 })
                 close_span(f"sub:{f('tool_call_id')}", {"error": True})
+                _fail_key = str(f("tool_call_id") or "")
+                agent_ctx.pop(_fail_key, None)
+                agent_spans.pop(_fail_key, None)
+                set_tool_parent(relay_session, turn_ctx)
 
             # ---- tool execution -------------------------------------------
+            # NOTE: no span is opened here. browser_tools.py and ops_tools.py
+            # already wrap each call in an `execute_tool <name>` span around the
+            # ACTUAL execution, with the arguments and tool type attached.
+            # Opening a second span from this event produced two spans per tool
+            # call in App Insights (verified: 2 distinct span ids for one
+            # browser_navigate, and 4 for one ops_node_capacity). The panel
+            # frames below stay -- they drive the UI, not the trace.
             elif etype == "tool.execution_start":
                 tname = str(f("tool_name") or "tool")
                 # execution_complete carries no tool_name, so remember it here
@@ -574,22 +594,6 @@ class AgentRunner:
                     "name": tname,
                     "arguments": jsonable(f("arguments", {})),
                 })
-                open_span(
-                    f"tool:{f('tool_call_id')}",
-                    f"execute_tool {tname}",
-                    {
-                        "gen_ai.operation.name": "execute_tool",
-                        "gen_ai.tool.name": tname,
-                        "gen_ai.tool.call.id": str(f("tool_call_id") or ""),
-                        "gen_ai.tool.description": as_text(f("tool_description")),
-                        "gen_ai.conversation.id": relay_session,
-                        # Which agent ran it -- lets you filter a subagent's
-                        # tool calls in the portal even when flattened.
-                        "gen_ai.agent.id": _event_agent_id(event) or FOUNDRY_AGENT_NAME,
-                    },
-                    # Nest under the owning subagent when the SDK names one.
-                    ctx=parent_ctx_for(_event_agent_id(event)),
-                )
 
             elif etype == "tool.execution_complete":
                 ok = bool(f("success", True))
@@ -600,10 +604,8 @@ class AgentRunner:
                     "success": ok,
                     "error": as_text(f("error")),
                 })
-                close_span(
-                    f"tool:{cid}",
-                    {"gen_ai.tool.success": ok, "error.type": as_text(f("error"))},
-                )
+                # No close_span: the tool's own span (browser_tools/ops_tools)
+                # closes when execution returns.
 
             # ---- skills ----------------------------------------------------
             elif etype == "skill.invoked":
