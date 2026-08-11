@@ -35,6 +35,7 @@ from .config import (
 from .hub import hub
 from .ops_tools import ops_tools
 from .telemetry import flush, session_context, tracer
+from .skills_store import resolve_skill_directories
 
 log = logging.getLogger("agents")
 
@@ -219,6 +220,12 @@ class AgentRunner:
             if relay_session in self._sessions:
                 return self._sessions[relay_session]
 
+            # Skills are pulled from Foundry at session start so a playbook can
+            # be updated without rebuilding the image. resolve_skill_directories
+            # does blocking HTTP, so it runs off the event loop; the result is
+            # process-cached, so only the first session pays the download.
+            skill_dirs = await asyncio.to_thread(resolve_skill_directories)
+
             assert self._client is not None
             session = await self._client.create_session(
                 model=MODEL,
@@ -237,7 +244,7 @@ class AgentRunner:
                 # drop the SDK's guardrails entirely.
                 system_message={"mode": "append", "content": MASTER_PROMPT},
                 enable_skills=True,
-                skill_directories=[str(SKILLS_DIR)],
+                skill_directories=skill_dirs,
                 # ops_tools() are in-process (see ops_tools.py) and ship inside
                 # this container, so no MCP server is needed or contacted.
                 # A stale mcp_servers entry pointing at an unreachable URL is

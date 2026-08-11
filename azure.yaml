@@ -25,8 +25,10 @@ services:
               value: ${GITHUB_TOKEN}
             - name: COPILOT_MODEL
               value: ${COPILOT_MODEL}
-            - name: APPLICATIONINSIGHTS_CONNECTION_STRING
-              value: ${APPLICATIONINSIGHTS_CONNECTION_STRING}
+            # APPLICATIONINSIGHTS_CONNECTION_STRING is deliberately NOT set:
+            # the platform reserves it and injects it into the container
+            # itself (setting it now fails the deploy with invalid_payload).
+            # telemetry.py reads it from the environment either way.
             - name: OTEL_SEMCONV_STABILITY_OPT_IN
               value: gen_ai_latest_experimental
             - name: AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING

@@ -22,5 +22,11 @@ COPILOT_MODEL = os.getenv("COPILOT_MODEL", "claude-sonnet-5")
 APPINSIGHTS = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
 FOUNDRY_AGENT_NAME = os.getenv("FOUNDRY_AGENT_NAME", "ghcp-sdk-browser")
 FOUNDRY_AGENT_VERSION = os.getenv("FOUNDRY_AGENT_VERSION", "local")
+#: Data-plane endpoint used to pull skill packages at runtime. Injected as
+#: FOUNDRY_PROJECT_ENDPOINT in the hosted container; azd writes the same value
+#: locally, so a dev run reads the same skills as production.
+FOUNDRY_PROJECT_ENDPOINT = os.getenv("FOUNDRY_PROJECT_ENDPOINT", "").rstrip("/")
+#: Set to "0" to skip the Foundry fetch and use only the skills in the image.
+FOUNDRY_SKILLS_ENABLED = os.getenv("FOUNDRY_SKILLS_ENABLED", "1") != "0"
 
 BROWSER_TOOL_TIMEOUT_S = float(os.getenv("BROWSER_TOOL_TIMEOUT_S", "45"))

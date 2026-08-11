@@ -44,6 +44,7 @@ async def readiness(_request: Request) -> PlainTextResponse:
 async def info(_request: Request) -> JSONResponse:
     from .agents import OPS_BOARD_URL, catalogue
     from .telemetry import telemetry_status
+    from .skills_store import skills_status
 
     return JSONResponse(
         {
@@ -53,6 +54,9 @@ async def info(_request: Request) -> JSONResponse:
             # Without this the exporter falls back to console and traces
             # vanish silently -- which looks identical to "tracing is broken".
             "telemetry": telemetry_status(),
+            # Whether skills came from Foundry or the baked-in image, so a
+            # silent fallback is visible rather than looking like a stale skill.
+            "skills_source": skills_status(),
             # Full tool + skill catalogue, read from the live tool definitions
             # and the skills directory rather than hand-maintained here (the
             # previous hardcoded list drifted from the real tools).
