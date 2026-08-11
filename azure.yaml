@@ -25,6 +25,11 @@ services:
               value: ${GITHUB_TOKEN}
             - name: COPILOT_MODEL
               value: ${COPILOT_MODEL}
+            # Where skills_store pulls skill packages from. Must NOT be called
+            # FOUNDRY_PROJECT_ENDPOINT: that prefix is reserved and rejected,
+            # and the platform does not inject the endpoint for us.
+            - name: SKILLS_PROJECT_ENDPOINT
+              value: ${FOUNDRY_PROJECT_ENDPOINT}
             - name: OTEL_SEMCONV_STABILITY_OPT_IN
               value: gen_ai_latest_experimental
             - name: AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING

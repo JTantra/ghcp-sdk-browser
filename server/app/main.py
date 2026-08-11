@@ -44,7 +44,13 @@ async def readiness(_request: Request) -> PlainTextResponse:
 async def info(_request: Request) -> JSONResponse:
     from .agents import OPS_BOARD_URL, catalogue
     from .telemetry import telemetry_status
-    from .skills_store import skills_status
+    from .skills_store import resolve_skill_directories, skills_status
+
+    # Resolve on demand so /info reports the REAL fetch result rather than the
+    # untouched initial state. Without this the report reads "image" with no
+    # error before any session has run, which is indistinguishable from a
+    # silent failure. Cached, so this costs nothing after the first call.
+    await asyncio.to_thread(resolve_skill_directories)
 
     return JSONResponse(
         {

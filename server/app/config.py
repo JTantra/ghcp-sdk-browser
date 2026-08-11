@@ -22,10 +22,15 @@ COPILOT_MODEL = os.getenv("COPILOT_MODEL", "claude-sonnet-5")
 APPINSIGHTS = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
 FOUNDRY_AGENT_NAME = os.getenv("FOUNDRY_AGENT_NAME", "ghcp-sdk-browser")
 FOUNDRY_AGENT_VERSION = os.getenv("FOUNDRY_AGENT_VERSION", "local")
-#: Data-plane endpoint used to pull skill packages at runtime. Injected as
-#: FOUNDRY_PROJECT_ENDPOINT in the hosted container; azd writes the same value
-#: locally, so a dev run reads the same skills as production.
-FOUNDRY_PROJECT_ENDPOINT = os.getenv("FOUNDRY_PROJECT_ENDPOINT", "").rstrip("/")
+#: Data-plane endpoint used to pull skill packages at runtime.
+#: NOTE: the platform does NOT inject FOUNDRY_PROJECT_ENDPOINT into hosted
+#: containers (verified against the registered agent version -- only the vars
+#: we declare are present). FOUNDRY_* is also a reserved prefix we cannot set
+#: ourselves, so the endpoint ships under our own name via azure.yaml.
+FOUNDRY_PROJECT_ENDPOINT = (
+    os.getenv("SKILLS_PROJECT_ENDPOINT")
+    or os.getenv("FOUNDRY_PROJECT_ENDPOINT", "")
+).rstrip("/")
 #: Set to "0" to skip the Foundry fetch and use only the skills in the image.
 FOUNDRY_SKILLS_ENABLED = os.getenv("FOUNDRY_SKILLS_ENABLED", "1") != "0"
 
