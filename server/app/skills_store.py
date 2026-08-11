@@ -57,11 +57,23 @@ def skills_status() -> dict[str, Any]:
 
 
 def _token() -> str:
-    """Bearer token for the Foundry data plane via the container's identity."""
-    from azure.identity import DefaultAzureCredential
+    """Bearer token for the Foundry data plane via the container's identity.
 
-    cred = DefaultAzureCredential()
-    return cred.get_token("https://ai.azure.com/.default").token
+    ``DefaultAzureCredential`` walks a long chain of sources and, when managed
+    identity is not reachable, IMDS probes can stall for minutes -- long past
+    the platform's session-ready timeout. Prefer the container's managed
+    identity directly and bound the attempt.
+    """
+    from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
+
+    try:
+        return ManagedIdentityCredential().get_token(
+            "https://ai.azure.com/.default"
+        ).token
+    except Exception:  # noqa: BLE001 - fall back for local runs (az login)
+        return DefaultAzureCredential(
+            exclude_interactive_browser_credential=True,
+        ).get_token("https://ai.azure.com/.default").token
 
 
 def _get_json(url: str, token: str, method: str = "GET") -> dict:

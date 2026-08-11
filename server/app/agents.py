@@ -31,6 +31,7 @@ from .config import (
     FOUNDRY_AGENT_NAME,
     GITHUB_TOKEN,
     SKILLS_DIR,
+    SKILLS_FETCH_TIMEOUT_S,
 )
 from .hub import hub
 from .ops_tools import ops_tools
@@ -220,11 +221,22 @@ class AgentRunner:
             if relay_session in self._sessions:
                 return self._sessions[relay_session]
 
-            # Skills are pulled from Foundry at session start so a playbook can
-            # be updated without rebuilding the image. resolve_skill_directories
-            # does blocking HTTP, so it runs off the event loop; the result is
-            # process-cached, so only the first session pays the download.
-            skill_dirs = await asyncio.to_thread(resolve_skill_directories)
+            # Skills are pulled from Foundry so a playbook can be updated
+            # without rebuilding the image. This is bounded and best-effort:
+            # a slow or unreachable store must never delay session creation,
+            # because the platform fails the session with `session_not_ready`
+            # long before a default credential/HTTP chain would give up.
+            try:
+                skill_dirs = await asyncio.wait_for(
+                    asyncio.to_thread(resolve_skill_directories),
+                    timeout=SKILLS_FETCH_TIMEOUT_S,
+                )
+            except Exception:  # noqa: BLE001 - includes asyncio.TimeoutError
+                log.warning(
+                    "skill fetch exceeded %ss; falling back to image skills",
+                    SKILLS_FETCH_TIMEOUT_S,
+                )
+                skill_dirs = [str(SKILLS_DIR)]
 
             assert self._client is not None
             session = await self._client.create_session(

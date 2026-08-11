@@ -30,3 +30,7 @@ FOUNDRY_PROJECT_ENDPOINT = os.getenv("FOUNDRY_PROJECT_ENDPOINT", "").rstrip("/")
 FOUNDRY_SKILLS_ENABLED = os.getenv("FOUNDRY_SKILLS_ENABLED", "1") != "0"
 
 BROWSER_TOOL_TIMEOUT_S = float(os.getenv("BROWSER_TOOL_TIMEOUT_S", "45"))
+#: Hard bound on the Foundry skill fetch during session creation. The platform
+#: gives up on a session well before Azure SDK retry chains do, so this must
+#: stay small -- a missed fetch only costs us the newest skill text.
+SKILLS_FETCH_TIMEOUT_S = float(os.getenv("SKILLS_FETCH_TIMEOUT_S", "15"))
