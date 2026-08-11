@@ -35,7 +35,7 @@ from .config import (
 )
 from .hub import hub
 from .ops_tools import ops_tools
-from .telemetry import flush, session_context, tracer
+from .telemetry import flush, tracer
 from .skills_store import resolve_skill_directories
 
 log = logging.getLogger("agents")
@@ -302,13 +302,12 @@ class AgentRunner:
         #: reasoning_id -> accumulated reasoning text (delta-only models).
         reasoning_buf: dict[str, str] = {}
 
-        # Root this turn in the PLATFORM's trace when we captured its
-        # traceparent, so Foundry shows our spans under its `invoke_agent`
-        # request instead of in a separate, invisible trace.
-        parent_ctx = session_context(relay_session)
-        turn_span = tracer().start_span(
-            f"invoke_agent {FOUNDRY_AGENT_NAME}", context=parent_ctx
-        )
+        # Root this turn in whatever context is ambient. Under
+        # InvocationAgentServerHost, TraceContextMiddleware has already
+        # attached the platform's inbound trace context to THIS request, so
+        # passing context=None makes the turn a child of the platform's
+        # `invoke_agent` span -- which is what the portal renders.
+        turn_span = tracer().start_span(f"invoke_agent {FOUNDRY_AGENT_NAME}")
         # Explicit context object: the turn runs in a detached asyncio task, and
         # OTel's implicit context does not cross that boundary -- which is why
         # tool spans previously formed their own traces.
