@@ -23,7 +23,11 @@ if [ "$(id -u)" = "0" ]; then
     # Take ownership of the persistent mount so the unprivileged user can
     # write to it. Best-effort: a read-only mount must not break startup.
     chown -R "${RUN_USER}:${RUN_USER}" "$STATE_HOME" 2>/dev/null || true
-    exec su -s /bin/sh "$RUN_USER" -c "$0"
+    # Pass STATE_HOME through explicitly: `su` RESETS $HOME to the target
+    # user's passwd entry (/home/agent), which silently sent state to the
+    # ephemeral home instead of the persistent mount on the first attempt.
+    STATE_HOME="$STATE_HOME" exec su -s /bin/sh "$RUN_USER" -c \
+        "STATE_HOME='$STATE_HOME' HOME='$STATE_HOME' $0"
 fi
 
 # --- unprivileged from here -------------------------------------------------
