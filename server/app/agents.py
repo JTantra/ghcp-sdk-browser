@@ -239,7 +239,7 @@ class AgentRunner:
                 skill_dirs = [str(SKILLS_DIR)]
 
             assert self._client is not None
-            session = await self._client.create_session(
+            common = dict(
                 model=MODEL,
                 streaming=True,
                 # Without this the SDK reports only the MASTER's stream, so a
@@ -266,6 +266,30 @@ class AgentRunner:
                 custom_agents=CUSTOM_AGENTS,
                 default_agent={"excluded_tools": MASTER_EXCLUDED},
             )
+
+            # Reuse the conversation if the SDK still has it on disk. The
+            # platform persists $HOME across its 15-minute idle deprovision and
+            # restores it on resume, so with COPILOT_HOME under $HOME (see
+            # infra/entrypoint.sh) a session that went idle keeps its history
+            # instead of silently starting over.
+            session = None
+            try:
+                if await self._client.get_session_metadata(relay_session):
+                    session = await self._client.resume_session(relay_session, **common)
+                    log.info("session RESUMED relay=%s", relay_session)
+            except Exception:  # noqa: BLE001 - resume is best-effort
+                log.warning("resume failed for %s; creating fresh",
+                            relay_session, exc_info=True)
+                session = None
+
+            if session is None:
+                # Pass the Foundry session id AS the Copilot session id so the
+                # two systems share one identifier: that is what makes the
+                # resume lookup above possible on a later container, and it
+                # makes the copilot->relay binding an identity mapping.
+                session = await self._client.create_session(
+                    session_id=relay_session, **common
+                )
             # The tool handlers receive inv.session_id -- the COPILOT session
             # id -- and map it back to the relay session to find the right
             # browser. Binding relay->relay never matched, so every tool call

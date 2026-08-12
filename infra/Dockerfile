@@ -31,10 +31,10 @@ COPY server/agents.json ./agents.json
 # Non-root: the platform mounts $HOME as the session filesystem.
 RUN useradd -m -u 1000 agent && chown -R agent:agent /app
 
-# The platform overrides HOME to /home/session, a mount this user does not own,
-# so anything writing under $HOME fails with EACCES. The Copilot SDK caches
-# there on first session. Point the XDG dirs at a path we DO own -- setting
-# these explicitly is more robust than assuming $HOME is writable.
+# Fallback state dirs. The entrypoint prefers $HOME (the platform's PERSISTENT
+# session mount, restored after an idle deprovision) and only falls back here
+# when that mount is not writable. A Dockerfile chown cannot prepare $HOME:
+# the platform mounts it at runtime, long after this layer is built.
 ENV XDG_CACHE_HOME=/app/.cache \
     XDG_CONFIG_HOME=/app/.config \
     XDG_DATA_HOME=/app/.local/share \
@@ -42,7 +42,10 @@ ENV XDG_CACHE_HOME=/app/.cache \
 RUN mkdir -p /app/.cache /app/.config /app/.local/share /app/.copilot \
  && chown -R agent:agent /app/.cache /app/.config /app/.local/share /app/.copilot
 
+COPY infra/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 USER agent
 
 EXPOSE 8088
-CMD ["python", "-m", "app.main"]
+CMD ["/app/entrypoint.sh"]
