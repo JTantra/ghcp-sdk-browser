@@ -1,29 +1,35 @@
 #!/bin/sh
 # Runtime bootstrap for the Foundry hosted-agent container.
 #
-# The platform mounts $HOME (/home/session) at RUNTIME, after the image is
-# built -- so a Dockerfile `chown` cannot fix its permissions: the mount does
-# not exist yet, and useradd's /home/agent is a different directory entirely.
-# That is why COPILOT_HOME previously pointed at /app/.copilot, an image layer
-# that resets on every restart, which in turn made resume_session() useless.
+# Runs as ROOT, prepares the persistent session mount, then drops to `agent`.
 #
-# Per the docs, $HOME and /files are the ONLY paths the platform persists:
-# their contents survive the 15-minute idle deprovision and are restored when
-# the session resumes. So point the SDK's state there when it is writable.
+# Why root is required here: the platform mounts $HOME (/home/session) at
+# RUNTIME, after the image is built. Measured on the live container, that mount
+# is uid=0 gid=0 mode=0755 -- root-owned and writable only by root. A Dockerfile
+# `chown` cannot touch it (the mount does not exist at build time), and a
+# `USER agent` container cannot chown it either (no CAP_CHOWN at uid 1000).
+# So we start as root purely to chown the mount, then hand off with `su`.
+#
+# This matters because $HOME and /files are the ONLY paths the platform
+# persists: their contents survive the 15-minute idle deprovision and are
+# restored when the session resumes. With COPILOT_HOME pointed there, an idle
+# session keeps its conversation history and resume_session() can reuse it.
 set -e
 
 STATE_HOME="${HOME:-/home/session}"
+RUN_USER=agent
 
-# The mount usually belongs to root while we run as uid 1000. If a chown is
-# permitted (it is when the container keeps CAP_CHOWN, e.g. root entrypoint or
-# a granted capability) take ownership; otherwise fall through to the probe
-# below and degrade cleanly.
-if [ ! -w "$STATE_HOME" ]; then
-    chown -R "$(id -u):$(id -g)" "$STATE_HOME" 2>/dev/null || true
+if [ "$(id -u)" = "0" ]; then
+    # Take ownership of the persistent mount so the unprivileged user can
+    # write to it. Best-effort: a read-only mount must not break startup.
+    chown -R "${RUN_USER}:${RUN_USER}" "$STATE_HOME" 2>/dev/null || true
+    exec su -s /bin/sh "$RUN_USER" -c "$0"
 fi
 
-# Probe writability rather than assume it: if the mount is read-only for uid
-# 1000 we must fall back, or the app dies at startup with EACCES and every
+# --- unprivileged from here -------------------------------------------------
+
+# Probe writability rather than assume it: if the chown above failed, writing
+# blindly kills startup with EACCES, /readiness never answers, and every
 # session fails with `session_not_ready`.
 if mkdir -p "$STATE_HOME/.copilot" 2>/dev/null \
    && [ -w "$STATE_HOME/.copilot" ]; then
@@ -32,11 +38,11 @@ if mkdir -p "$STATE_HOME/.copilot" 2>/dev/null \
     export XDG_CONFIG_HOME="$STATE_HOME/.config"
     export XDG_DATA_HOME="$STATE_HOME/.local/share"
     mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" 2>/dev/null || true
-    echo "entrypoint: session state -> $COPILOT_HOME (persistent)"
+    echo "entrypoint: session state -> $COPILOT_HOME (persistent, resume enabled)"
 else
-    # Ephemeral: conversation history will not survive an idle deprovision,
-    # but the agent still works. Logged loudly so this is visible in App
-    # Insights rather than silently degrading resume.
+    # Ephemeral: the agent still works, but conversation history dies with the
+    # container. Logged loudly so this shows up in App Insights instead of
+    # silently disabling resume.
     export COPILOT_HOME=/app/.copilot
     export XDG_CACHE_HOME=/app/.cache
     export XDG_CONFIG_HOME=/app/.config

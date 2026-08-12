@@ -45,7 +45,10 @@ RUN mkdir -p /app/.cache /app/.config /app/.local/share /app/.copilot \
 COPY infra/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-USER agent
-
+# Deliberately NOT `USER agent`. The platform mounts $HOME at runtime as
+# uid=0 mode=0755 (measured on the live container), so only root can chown it
+# -- and that mount is the only storage that survives an idle deprovision.
+# entrypoint.sh chowns it and then drops to `agent` via su, so the Python
+# process still runs unprivileged.
 EXPOSE 8088
 CMD ["/app/entrypoint.sh"]
