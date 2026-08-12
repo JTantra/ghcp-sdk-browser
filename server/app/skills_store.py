@@ -56,8 +56,24 @@ _lock = threading.Lock()
 
 
 def skills_status() -> dict[str, Any]:
-    """Where skills came from. Surfaced on /info alongside telemetry_status()."""
-    return dict(_state)
+    """Where skills came from. Surfaced on /info alongside telemetry_status().
+
+    Adds ``usable`` and escalates the error when NOTHING resolved: the image no
+    longer ships a skills folder (see infra/Dockerfile), so the historical
+    "fall back to disk" path can now yield zero real directories. Without this
+    the agent would run with no skills at all and still report a clean status.
+    """
+    state = dict(_state)
+    dirs = _resolved or []
+    real = [d for d in dirs if Path(d).is_dir()]
+    state["usable"] = bool(real)
+    state["directories"] = real
+    if not real and state.get("source") != "foundry":
+        state["error"] = (
+            f"NO SKILLS AVAILABLE: {state.get('error') or 'fetch did not run'}"
+            " (no image fallback -- skills come from Foundry only)"
+        )
+    return state
 
 
 def _token() -> str:

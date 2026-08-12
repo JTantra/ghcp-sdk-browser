@@ -12,6 +12,7 @@ import json
 import logging
 import os
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from copilot import CopilotClient
@@ -85,34 +86,64 @@ MASTER_EXCLUDED: list[str] = _CONFIG["master"]["excluded_tools"]
 
 
 def _skill_catalogue() -> list[dict[str, Any]]:
-    """Read the skills directory so the catalogue cannot drift from reality."""
+    """Read the skills directories so the catalogue cannot drift from reality.
+
+    Scans every RESOLVED directory, not just SKILLS_DIR: the image no longer
+    ships server/skills, so reading that path alone would report an empty
+    catalogue on /info while skills were in fact loaded from Foundry.
+    """
     skills: list[dict[str, Any]] = []
-    if not SKILLS_DIR.is_dir():
-        return skills
-    for path in sorted(SKILLS_DIR.glob("*/SKILL.md")):
-        name, description = path.parent.name, ""
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            skills.append({"name": name, "description": "", "path": str(path)})
+    seen: set[str] = set()
+
+    roots: list[Path] = []
+    try:
+        from .skills_store import resolve_skill_directories
+
+        roots = [Path(d) for d in resolve_skill_directories()]
+    except Exception:  # noqa: BLE001 - catalogue is diagnostic, never fatal
+        # WARNING not debug: a broad except here silently swallowed a NameError
+        # (Path was not imported) and the catalogue reported 0 skills while the
+        # fetch was working perfectly. A quiet failure in a diagnostic is worse
+        # than no diagnostic.
+        log.warning("could not resolve skill dirs for catalogue", exc_info=True)
+    if SKILLS_DIR not in roots:
+        roots.append(SKILLS_DIR)
+
+    for root in roots:
+        if not root.is_dir():
             continue
-        # Minimal frontmatter read: avoids a YAML dependency for two keys.
-        if text.startswith("---"):
-            end = text.find("\n---", 3)
-            for line in text[3 : end if end > 0 else 0].splitlines():
-                key, _, value = line.partition(":")
-                key, value = key.strip(), value.strip().strip("\"'")
-                if key == "name" and value:
-                    name = value
-                elif key == "description" and value:
-                    description = value
-        used_by = [a["name"] for a in CUSTOM_AGENTS if path.parent.name in a.get("skills", [])]
-        skills.append({
-            "name": name,
-            "description": description,
-            "used_by": used_by,
-            "path": str(path.relative_to(SKILLS_DIR.parent)),
-        })
+        for path in sorted(root.glob("*/SKILL.md")):
+            if path.parent.name in seen:
+                continue
+            seen.add(path.parent.name)
+            name, description = path.parent.name, ""
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                skills.append({"name": name, "description": "", "path": str(path)})
+                continue
+            # Minimal frontmatter read: avoids a YAML dependency for two keys.
+            if text.startswith("---"):
+                end = text.find("\n---", 3)
+                for line in text[3 : end if end > 0 else 0].splitlines():
+                    key, _, value = line.partition(":")
+                    key, value = key.strip(), value.strip().strip("\"'")
+                    if key == "name" and value:
+                        name = value
+                    elif key == "description" and value:
+                        description = value
+            used_by = [
+                a["name"] for a in CUSTOM_AGENTS if path.parent.name in a.get("skills", [])
+            ]
+            skills.append({
+                "name": name,
+                "description": description,
+                "used_by": used_by,
+                # Relative to its own root: the Foundry cache and the repo
+                # folder have different parents.
+                "path": str(path.relative_to(root)),
+                "source": "foundry" if root != SKILLS_DIR else "image",
+            })
     return skills
 
 

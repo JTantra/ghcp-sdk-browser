@@ -21,7 +21,14 @@ COPY server/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server/app ./app
-COPY server/skills ./skills
+# NOTE: server/skills is deliberately NOT copied. Skills are fetched from
+# Foundry at session start (see app/skills_store.py) so a playbook can be
+# updated without rebuilding the image. The folder stays in the repo as the
+# publish source for scripts/publish_skills.py.
+# Verified before removing: with the folder absent, resolve_skill_directories()
+# still reports source="foundry" with all four skills and hands the SDK a real
+# directory. Because there is no longer an on-disk fallback, a fetch failure is
+# now surfaced loudly by skills_status() instead of silently degrading.
 # Declarative agent topology (master prompt, subagents, models, tools, skills).
 # agents.py opens this at MODULE LOAD, so omitting it raises FileNotFoundError
 # before uvicorn binds -- /readiness never answers and every session fails with
