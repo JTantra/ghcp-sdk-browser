@@ -14,6 +14,14 @@ set -e
 
 STATE_HOME="${HOME:-/home/session}"
 
+# The mount usually belongs to root while we run as uid 1000. If a chown is
+# permitted (it is when the container keeps CAP_CHOWN, e.g. root entrypoint or
+# a granted capability) take ownership; otherwise fall through to the probe
+# below and degrade cleanly.
+if [ ! -w "$STATE_HOME" ]; then
+    chown -R "$(id -u):$(id -g)" "$STATE_HOME" 2>/dev/null || true
+fi
+
 # Probe writability rather than assume it: if the mount is read-only for uid
 # 1000 we must fall back, or the app dies at startup with EACCES and every
 # session fails with `session_not_ready`.

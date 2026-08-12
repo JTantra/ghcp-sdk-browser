@@ -84,6 +84,18 @@ def fs_probe() -> dict:
     ]
 
     results = []
+    # Ownership/mode of $HOME decides whether the persistent mount is usable.
+    # It is not writable for uid 1000 today, so the entrypoint falls back to
+    # /app (ephemeral, no resume). Report the actual owner so we know whether a
+    # USER change or a different subdir would fix it, rather than guessing.
+    try:
+        st = Path(os.environ.get("HOME", "/home/session")).stat()
+        home_stat = {
+            "uid": st.st_uid, "gid": st.st_gid, "mode": oct(st.st_mode & 0o7777),
+        }
+    except Exception as exc:  # noqa: BLE001
+        home_stat = {"error": f"{type(exc).__name__}: {exc}"}
+
     for path in candidates:
         entry: dict = {"path": path}
         p = Path(path)
@@ -118,6 +130,7 @@ def fs_probe() -> dict:
         "uid": os.getuid(),
         "HOME": os.environ.get("HOME"),
         "COPILOT_HOME": os.environ.get("COPILOT_HOME"),
+        "home_stat": home_stat,
         "FOUNDRY_AGENT_SESSION_ID": os.environ.get("FOUNDRY_AGENT_SESSION_ID"),
         "candidates": results,
         "verdict": "run me again after a redeploy; a non-empty "
