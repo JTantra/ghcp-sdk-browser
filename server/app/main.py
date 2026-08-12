@@ -29,6 +29,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator
 
@@ -48,6 +49,80 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
 )
 log = logging.getLogger("main")
+
+#: Process start time, used to stamp fsprobe markers so a marker written by an
+#: EARLIER container is distinguishable from this one's.
+_BOOT_TS = time.time()
+
+
+def fs_probe() -> dict:
+    """Report which candidate directories survive a container restart.
+
+    Writes a marker stamped with this process's boot id into each candidate,
+    then lists every marker present. A marker from an EARLIER boot means that
+    path persists across restarts -- which is the precondition for using
+    Copilot's resume_session(): its conversation state lives under
+    COPILOT_HOME, and that currently points at /app/.copilot (an image layer
+    that resets on every deploy).
+
+    Also reports writability, because /home/session is the platform's session
+    mount and previously raised EACCES for our non-root user -- the reason
+    COPILOT_HOME was moved to /app in the first place.
+    """
+    import getpass
+    import os
+    import platform
+    from pathlib import Path
+
+    boot = f"{platform.node()}-{int(_BOOT_TS)}"
+    candidates = [
+        "/home/session",
+        "/home/session/.state",
+        os.environ.get("HOME", "/home/agent"),
+        "/app/.copilot",
+        "/tmp",
+    ]
+
+    results = []
+    for path in candidates:
+        entry: dict = {"path": path}
+        p = Path(path)
+        try:
+            entry["exists"] = p.is_dir()
+            if not entry["exists"]:
+                try:
+                    p.mkdir(parents=True, exist_ok=True)
+                    entry["created"] = True
+                    entry["exists"] = True
+                except Exception as exc:  # noqa: BLE001
+                    entry["error"] = f"mkdir: {type(exc).__name__}: {exc}"
+                    results.append(entry)
+                    continue
+
+            # Markers already here -- any from another boot proves persistence.
+            found = sorted(q.name for q in p.glob(".fsprobe-*"))
+            entry["markers_found"] = found
+            entry["from_earlier_boot"] = [m for m in found if boot not in m]
+
+            marker = p / f".fsprobe-{boot}"
+            marker.write_text(str(_BOOT_TS), encoding="utf-8")
+            entry["writable"] = True
+        except Exception as exc:  # noqa: BLE001 - a probe must never 500
+            entry["writable"] = False
+            entry["error"] = f"{type(exc).__name__}: {exc}"
+        results.append(entry)
+
+    return {
+        "boot_id": boot,
+        "user": getpass.getuser(),
+        "uid": os.getuid(),
+        "HOME": os.environ.get("HOME"),
+        "COPILOT_HOME": os.environ.get("COPILOT_HOME"),
+        "FOUNDRY_AGENT_SESSION_ID": os.environ.get("FOUNDRY_AGENT_SESSION_ID"),
+        "candidates": results,
+        "verdict": "run me again after a redeploy; a non-empty "
+                   "from_earlier_boot means that path persists",
+    }
 
 
 async def readiness(_request: Request) -> PlainTextResponse:
@@ -129,6 +204,14 @@ async def invocations(request: Request):
         # /info is a GET, but the hosted proxy only relays POST /invocations,
         # so the same payload is reachable here for remote diagnosis.
         return await info(request)
+
+    if mode == "fsprobe":
+        # Which directories survive a container restart? The resume_session()
+        # design depends on COPILOT_HOME living somewhere persistent, and it
+        # currently points at /app/.copilot -- an image layer that resets on
+        # every deploy. Writes a marker stamped with this boot, and reports
+        # markers from EARLIER boots: any that show up prove persistence.
+        return JSONResponse(fs_probe())
 
     if mode == "end_session":
         # The extension calls this when the operator starts a new session, so
