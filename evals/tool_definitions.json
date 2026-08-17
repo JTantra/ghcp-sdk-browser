@@ -89,5 +89,41 @@
       },
       "required": []
     }
+  },
+  {
+    "name": "delegate_to_risk_analyst",
+    "description": "Delegate to the risk-analyst subagent. Scores shipment delay risk from ops-board rows. Use when you have shipment data and need risk scores and bands. The master must delegate analysis rather than doing it itself.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "description": {"type": "string", "description": "Short label for the delegated task."},
+        "prompt": {"type": "string", "description": "The structured JSON task handed to the subagent."}
+      },
+      "required": ["prompt"]
+    }
+  },
+  {
+    "name": "delegate_to_recovery_planner",
+    "description": "Delegate to the recovery-planner subagent. Proposes schedule-recovery options for at-risk shipments. Use after risk scoring, for shipments in the critical or elevated bands. This subagent exclusively owns ops_node_capacity and ops_carrier_policy, so any question needing port capacity or carrier policy must be routed here.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "description": {"type": "string", "description": "Short label for the delegated task."},
+        "prompt": {"type": "string", "description": "The structured JSON task handed to the subagent."}
+      },
+      "required": ["prompt"]
+    }
+  },
+  {
+    "name": "delegate_to_reporter",
+    "description": "Delegate to the reporter subagent. Formats scored shipments and recovery options into the standard markdown recovery brief. Use last, once analysis is complete.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "description": {"type": "string", "description": "Short label for the delegated task."},
+        "prompt": {"type": "string", "description": "The structured JSON task handed to the subagent."}
+      },
+      "required": ["prompt"]
+    }
   }
 ]

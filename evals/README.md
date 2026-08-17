@@ -100,12 +100,79 @@ Coherence, Fluency — judged by **gpt-4.1** deployed in this Foundry project.
 The agent under test runs **claude-sonnet-5** via GitHub Copilot, so judge and
 subject never share weights.
 
+Plus **`DelegationEvaluator`** (`delegation_evaluator.py`) — deterministic, no
+judge model, no cost.
+
 `tool_definitions.json` carries the real schemas for all 8 tools; without it
 Tool Call Accuracy has nothing to compare against.
 
 Each row gets a **fresh relay session**. The agent persists conversation state
 per session, so a shared one would let row N see row N-1's history and quietly
 inflate scores.
+
+## Capturing subagent delegation
+
+Foundry ships **no delegation evaluator**. `azure-ai-evaluation` 1.18.3 has
+tool-call evaluators (`ToolCallAccuracy`, plus unexported `_ToolSelection` /
+`_ToolInputAccuracy` / `_ToolCallSuccess`) but nothing modelling an
+agent-calls-agent edge. Its one agent-aware component, `AIAgentConverter`,
+reads **Foundry Agent Service** thread run-steps — our subagents are in-process
+GitHub Copilot SDK `custom_agents`, so it has nothing to read.
+
+Delegation is therefore captured two ways, from the SSE stream. **Neither
+changes the agent** — this harness only reads `/invocations`; `agents.json`,
+`agents.py` and the deployed container are untouched.
+
+**1. Delegation as declared tool calls.** The SDK already emits one tool call
+per delegation, named `task`:
+
+```
+task {agent_type: 'risk-analyst',     description: 'Score SH-4420 risk', ...}
+task {agent_type: 'recovery-planner', description: 'Propose recovery plan', ...}
+```
+
+Reported verbatim these score as calls to an undefined tool, because `task`
+is not in `tool_definitions.json`. So each frame is relabelled to a declared
+per-subagent name (`delegate_to_recovery_planner`, …) with a schema whose
+description is lifted from `agents.json`. One frame → one call; nothing merged,
+nothing invented. Tool Call Accuracy then judges whether delegating *there* was
+appropriate.
+
+> Caveat: `delegate_to_*` is a harness-side naming convention. It is faithful
+> to what the agent did, but it will not grep to anything under `server/`.
+
+**2. `DelegationEvaluator` — deterministic.** Which subagents ran and in what
+order is a structural *fact*, recoverable from `subagent_started` frames (one
+per delegation, in dispatch order). An LLM judge would only add cost and
+variance to a question with an exact answer.
+
+| metric | meaning |
+|---|---|
+| `delegation_recall` | fraction of `expected_subagents` that actually ran |
+| `delegation_order_ok` | 1.0 if those that ran did so in the expected order |
+| `delegation_missing` | expected but absent |
+| `delegation_unexpected` | ran but not expected (catches over-delegation) |
+
+Order compares the *first* occurrence of each expected agent, so repeats and
+extra subagents are not ordering faults. Rows asserting no delegation score
+1.0 only if the agent really delegated to nobody.
+
+The two are complementary, and together they localise a failure:
+
+```
+row asserts ops_node_capacity, tool is missing
+  delegation_recall 0.0  -> master never delegated      -> fix the master prompt
+  delegation_recall 1.0  -> subagent ran, skipped tool  -> fix the playbook skill
+```
+
+Note `subagent_started` frames carry **display** names (`Risk Analyst`) while
+`task` carries **config** names (`risk-analyst`); both are normalised via
+`_SUBAGENT_ALIASES`.
+
+**3. Not implemented here: trace-based online eval.** Subagent spans already
+nest correctly in App Insights, so Foundry's continuous evaluation can sample
+live traces for delegation structure without a golden set — the
+production-monitoring complement to this batch suite.
 
 ## Gotchas that cost real time
 
@@ -117,16 +184,32 @@ inflate scores.
   - bearer token as `api_key` → AOAI **401**, because it is then sent as the
     `api-key` header instead of `Authorization: Bearer`.
 - **The target signature is introspected.** `def target(query, **_)` fails with
-  `Missing required inputs for target: ['_']`. Name exactly the columns you want.
+  `Missing required inputs for target: ['_']`. The same applies to **custom
+  evaluators**: a `**_` catch-all on `__call__` yields
+  `Some evaluators are missing required inputs: - delegation: ['_']`.
+  Name exactly the columns you want, nothing more.
 - **`/invocations` returns `output` as a STRING** (`main.py:260`), not
   `{"output": {"content": ...}}`. Parsing it as a dict silently scores every row
   against an empty response.
 - **The evaluations REST API is `api-version=2025-05-15-preview`**, not `v1`
   (`v1` → `UnsupportedApiVersionValue`) and not `2025-07-31-preview`
   (→ `API version not supported`, despite being listed as supported).
-- `studio_url` is built client-side and proves nothing. Verify a run landed:
+- **`azure_ai_project` alone is NOT enough to show on the agent's page.** The
+  run lands in the *project* evaluations list, but the **agent's Evaluation
+  tab** reads `No evaluations found`, because that view filters by
+  `tags.targetId`. Portal-created runs set these; SDK runs default to
+  `tags={}`. Diffing an SDK run against a portal-created one showed `tags` was
+  the **only** difference. Pass:
+  ```python
+  evaluate(..., tags={"targetType": "agent",
+                      "targetId": "ghcp-sdk-browser",   # exact agent name
+                      "trigger_type": "oneoff"})
+  ```
+- `studio_url` is built client-side and proves nothing. Verify a run landed
+  *and is agent-visible*:
   ```
   GET {project}/evaluations/runs?api-version=2025-05-15-preview
+  # then check tags.targetId == <agent name>
   ```
 
 ## Files

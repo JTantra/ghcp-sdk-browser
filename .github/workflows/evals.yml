@@ -1,0 +1,118 @@
+name: evals
+
+# Batch evaluation of the deployed ghcp-sdk-browser agent.
+#
+# Auth is OIDC -- no secrets in the repo. The federated credentials live on the
+# `jh-cobra-github-actions` app registration and are bound to THIS repo:
+#   ghcp-evals-master  repo:JTantra/ghcp-sdk-browser:ref:refs/heads/master
+#   ghcp-evals-pr      repo:JTantra/ghcp-sdk-browser:pull_request
+#   ghcp-evals-env     repo:JTantra/ghcp-sdk-browser:environment:evals
+# GitHub sends a DIFFERENT subject per trigger, and a credential only matches
+# its exact subject -- hence three, not one.
+#
+# Repo variables required (Settings > Secrets and variables > Actions > Variables):
+#   AZURE_CLIENT_ID        5d06d090-7b72-4a87-a429-6d43e7bac6e7
+#   AZURE_TENANT_ID        92def590-0f4c-43ab-be1e-493d616e2725
+#   AZURE_SUBSCRIPTION_ID  98517cf5-e3e8-4d6e-9e54-a93d702df3d9
+
+on:
+  workflow_dispatch:
+    inputs:
+      rows:
+        description: "Row ids to run (blank = all 10)"
+        required: false
+        default: ""
+      gate:
+        description: "Fail the job if thresholds are breached"
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - "server/**"
+      - "evals/**"
+      - ".github/workflows/evals.yml"
+
+# OIDC needs id-token: write. contents: read is the default-deny baseline.
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  # One eval at a time per ref: concurrent runs would compete for agent
+  # sessions and model quota, and slow rows would time out.
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    # Full agent turns are slow (~40s/row incl. subagents + browser relay).
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # 3.14 is too new for the Azure SDKs
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install deps
+        working-directory: evals
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Configure
+        working-directory: evals
+        run: cp judge_model.env.example .env
+
+      - name: Run evaluation
+        working-directory: evals
+        run: |
+          # PRs run a slim, delegation-sensitive subset to keep judge cost and
+          # wall time down; dispatch runs whatever was asked for (default all).
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ROWS="board-read-count,full-recovery-brief,crane-realloc-capacity-guard,carrier-policy-grounding"
+            NAME="pr-${{ github.event.number }}-${{ github.run_number }}"
+          else
+            ROWS="${{ inputs.rows }}"
+            NAME="ci-${{ github.run_number }}"
+          fi
+
+          ARGS="--name $NAME"
+          [ -n "$ROWS" ] && ARGS="$ARGS --only $ROWS"
+          if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ inputs.gate }}" = "true" ]; then
+            ARGS="$ARGS --gate"
+          fi
+
+          echo "run_eval.py $ARGS"
+          set +e
+          python run_eval.py $ARGS
+          code=$?
+          set -e
+          # 0 = pass, 1 = threshold breach, 2 = harness/infra failure.
+          # 2 is NOT a quality regression -- surface it as such rather than
+          # letting a dead backend look like the agent got worse.
+          if [ $code -eq 2 ]; then
+            echo "::error::Eval harness could not reach the agent (upstream failure). Scores are not meaningful."
+          elif [ $code -eq 1 ]; then
+            echo "::error::Eval thresholds breached -- see the job summary."
+          fi
+          exit $code
+
+      - name: Upload results
+        # always(): the artifact is most valuable precisely when the gate failed.
+        # results/ is gitignored, so this is also the only durable copy.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ github.run_number }}
+          path: evals/results/*.json
+          retention-days: 30
