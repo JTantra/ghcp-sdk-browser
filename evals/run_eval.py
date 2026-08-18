@@ -293,7 +293,7 @@ def main() -> None:
         print(f"  {metric}: {value}")
     print("\nportal:", result.get("studio_url", "(no studio_url returned)"))
 
-    _write_job_summary(args.name, metrics, result)
+    _write_job_summary(args.name, metrics, result, _thresholds())
 
     # 1. Infrastructure failure ALWAYS wins over any score.
     #
@@ -315,10 +315,7 @@ def main() -> None:
 
     # 2. Threshold gate. `$comment` keys are documentation (same convention as
     # agents.json) and must not be read as metrics.
-    thresholds = {
-        k: v for k, v in json.loads((HERE / "thresholds.json").read_text()).items()
-        if not k.startswith("$comment")
-    }
+    thresholds = _thresholds()
     failures = []
     print("\n=== gate ===")
     for metric, floor in sorted(thresholds.items()):
@@ -340,37 +337,185 @@ def main() -> None:
     print("\nall thresholds met")
 
 
-def _write_job_summary(name: str, metrics: dict, result: dict) -> None:
-    """Render a markdown table into the GitHub Actions job summary."""
+def _thresholds() -> dict[str, float]:
+    """Gate floors. `$comment` keys are documentation, not metrics."""
+    return {
+        k: v for k, v in json.loads((HERE / "thresholds.json").read_text()).items()
+        if not k.startswith("$comment")
+    }
+
+
+def _row_evaluators(row: dict) -> dict[str, dict]:
+    """Group one row's `outputs.<ns>.<metric>_*` fields by evaluator namespace.
+
+    Derived from the keys rather than hardcoded: adding an evaluator to
+    run_eval.py should widen the summary automatically, not silently omit it.
+    """
+    found: dict[str, dict] = {}
+    for key, val in row.items():
+        if not key.startswith("outputs.") or key.count(".") < 2:
+            continue
+        _, ns, field = key.split(".", 2)
+        if field.endswith("_result"):
+            found.setdefault(ns, {})["result"] = val
+        elif field.endswith("_score"):
+            found.setdefault(ns, {})["score"] = val
+        elif field.endswith("_threshold"):
+            found.setdefault(ns, {})["threshold"] = val
+        elif field.endswith("_reason"):
+            found.setdefault(ns, {})["reason"] = val
+    return found
+
+
+def _badge(ok: bool | None) -> str:
+    if ok is None:
+        return "⚪ n/a"
+    return "🟢 PASS" if ok else "🔴 FAIL"
+
+
+def _write_job_summary(name: str, metrics: dict, result: dict,
+                       thresholds: dict | None = None) -> None:
+    """Render the GitHub Actions job summary.
+
+    The earlier version printed bare `binary_aggregate` values with no floor and
+    no judge rationale, so a green run and a barely-passing one looked identical
+    and a failure gave no clue WHY. Everything below already exists in the
+    results JSON (`*_threshold`, `*_result`, `*_reason`); it was just unread.
+    """
     path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not path:
         return
+    thresholds = thresholds or {}
     rows = result.get("rows", [])
-    lines = [f"## Eval: `{name}`", ""]
+    gated = sum(1 for m, f in thresholds.items()
+                if isinstance(metrics.get(m), (int, float)) and metrics[m] >= f)
+    overall = (not _HARNESS_ERRORS) and gated == len(thresholds)
+
+    lines = [f"## Eval `{name}` — {'🟢 PASS' if overall else '🔴 FAIL'}", "",
+             f"{len(rows)} row(s) · {gated}/{len(thresholds)} gated metrics met", ""]
 
     if _HARNESS_ERRORS:
         lines += [f"### ⚠️ Harness failure — {len(_HARNESS_ERRORS)} row(s) never reached the agent",
-                  "", "Scores are not meaningful.", ""]
+                  "", "Scores below are **not meaningful**.", ""]
         for e in sorted(set(_HARNESS_ERRORS))[:5]:
             lines.append(f"- `{e}`")
         lines.append("")
 
-    lines += ["| metric | value |", "|---|---|"]
-    for k in sorted(metrics):
-        if k.endswith("binary_aggregate") or "delegation" in k:
-            lines.append(f"| `{k}` | {metrics[k]:.2f} |")
+    # -- gated metrics: value vs floor, with headroom ----------------------
+    lines += ["### Gate", "",
+              "| | metric | score | floor | headroom |", "|---|---|---|---|---|"]
+    for metric in sorted(thresholds):
+        floor = thresholds[metric]
+        actual = metrics.get(metric)
+        if not isinstance(actual, (int, float)):
+            lines.append(f"| ⚫ MISSING | `{metric}` | — | {floor:.2f} | — |")
+            continue
+        delta = actual - floor
+        lines.append(f"| {_badge(actual >= floor)} | `{metric}` | **{actual:.2f}** | "
+                     f"{floor:.2f} | {delta:+.2f} |")
 
-    lines += ["", "### Per-row delegation", "",
-              "| row | recall | order | missing |", "|---|---|---|---|"]
-    for r in rows:
-        rid = r.get("inputs.id", "?")
-        rec = r.get("outputs.delegation.delegation_recall")
-        order = r.get("outputs.delegation.delegation_order_ok")
-        miss = r.get("outputs.delegation.delegation_missing") or "—"
-        rec_s = f"{rec:.2f}" if isinstance(rec, (int, float)) else "—"
-        ord_s = f"{order:.0f}" if isinstance(order, (int, float)) else "—"
-        flag = " ⚠️" if isinstance(rec, (int, float)) and rec < 1.0 else ""
-        lines.append(f"| `{rid}` | {rec_s}{flag} | {ord_s} | {miss} |")
+    # -- ungated metrics: reported, explicitly not enforced ----------------
+    extra = [m for m in sorted(metrics)
+             if m.endswith("binary_aggregate") and m not in thresholds]
+    if extra:
+        lines += ["", "<details><summary>Informational (not gated)</summary>", "",
+                  "| metric | pass rate | mean judge score |", "|---|---|---|"]
+        for m in extra:
+            ns = m.split(".")[0]
+            mean = next((v for k, v in metrics.items()
+                         if k.startswith(f"{ns}.") and k.endswith("_score")), None)
+            mean_s = f"{mean:.2f} / 5" if isinstance(mean, (int, float)) else "—"
+            lines.append(f"| `{m}` | {metrics[m]:.2f} | {mean_s} |")
+        lines += ["", "</details>"]
+
+    # -- per-row scorecard --------------------------------------------------
+    namespaces = sorted({ns for r in rows for ns in _row_evaluators(r)})
+    if rows:
+        lines += ["", "### Rows", "",
+                  "| row | " + " | ".join(f"`{ns}`" for ns in namespaces) +
+                  " | delegation |",
+                  "|---" * (len(namespaces) + 2) + "|"]
+        for r in rows:
+            evs = _row_evaluators(r)
+            cells = []
+            for ns in namespaces:
+                ev = evs.get(ns, {})
+                score, res = ev.get("score"), ev.get("result")
+                # ToolCallAccuracy returns NaN on rows where it declines to
+                # judge (no declared tool was called). NaN >= x is False
+                # everywhere, so it must be caught explicitly or it renders
+                # as a confident-looking "nan/3".
+                if not isinstance(score, (int, float)) or score != score:
+                    cells.append("⚪ n/a")
+                    continue
+                mark = "🟢" if res == "pass" else "🔴" if res == "fail" else "⚪"
+                thr = ev.get("threshold")
+                thr_s = f"/{thr:g}" if isinstance(thr, (int, float)) else ""
+                cells.append(f"{mark} {score:g}{thr_s}")
+            rec = r.get("outputs.delegation.delegation_recall")
+            miss = r.get("outputs.delegation.delegation_missing")
+            unexp = r.get("outputs.delegation.delegation_unexpected")
+            exp = r.get("inputs.expected_subagents") or []
+            if not isinstance(rec, (int, float)):
+                deleg = "—"
+            elif rec < 1.0 or miss:
+                # Gated: a missing subagent is a real regression.
+                deleg = f"🔴 recall {rec:.2f}" + (f"; missing `{miss}`" if miss else "")
+            elif unexp:
+                # NOT gated -- extra subagents are over-delegation, worth
+                # surfacing but not a failure. Rendering these red made three
+                # rows look broken inside a run that passed its gate.
+                deleg = f"🟡 extra `{unexp}`"
+            else:
+                # No expected subagents is a real assertion (the master must NOT
+                # delegate), so say which case passed rather than a bare tick.
+                deleg = "🟢 " + (", ".join(exp) if exp else "none (correct)")
+            lines.append(f"| `{r.get('inputs.id', '?')}` | " + " | ".join(cells) +
+                         f" | {deleg} |")
+
+    # -- judge rationale ----------------------------------------------------
+    # Failures first and always expanded; passes collapsed. The reason text is
+    # the only thing that tells you what to FIX, so it must never be a click
+    # away when something is red.
+    def _failed(r: dict) -> bool:
+        return any(e.get("result") == "fail" for e in _row_evaluators(r).values())
+
+    bad = [r for r in rows if _failed(r)]
+    good = [r for r in rows if not _failed(r)]
+
+    def _rationale(r: dict, failed_only: bool) -> list[str]:
+        out = [f"**`{r.get('inputs.id', '?')}`** — {r.get('inputs.query', '')[:200]}", ""]
+        for ns, ev in sorted(_row_evaluators(r).items()):
+            reason = (ev.get("reason") or "").strip()
+            # On a failing row, the passing judges' prose buries the one
+            # verdict that explains the failure. Show only what went wrong.
+            if not reason or (failed_only and ev.get("result") != "fail"):
+                continue
+            score, thr = ev.get("score"), ev.get("threshold")
+            mark = "🟢" if ev.get("result") == "pass" else "🔴"
+            head = f"{mark} **{ns}**"
+            if isinstance(score, (int, float)) and score == score:
+                head += f" {score:g}" + (f"/{thr:g}" if isinstance(thr, (int, float)) else "")
+            # Judges prefix chain-of-thought with a fixed phrase; drop it.
+            reason = reason.replace("Let's think step by step: ", "")
+            out.append(f"- {head} — {reason[:600]}")
+        if failed_only:
+            resp = (r.get("outputs.response") or "").strip().replace("\n", " ")
+            if resp:
+                out += ["", f"> **agent said:** {resp[:400]}"]
+        out.append("")
+        return out
+
+    if bad:
+        lines += ["", "### 🔴 Judge rationale — failing rows", ""]
+        for r in bad:
+            lines += _rationale(r, failed_only=True)
+    if good:
+        lines += ["", f"<details><summary>Judge rationale — {len(good)} passing row(s)</summary>",
+                  ""]
+        for r in good:
+            lines += _rationale(r, failed_only=False)
+        lines += ["</details>"]
 
     url = result.get("studio_url")
     if url:
