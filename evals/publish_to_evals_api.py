@@ -29,6 +29,10 @@ produce a second set of scores that could disagree with the gate).
 Scores and judge reasons ride along as extra item fields so they show in the
 row detail view.
 
+All runs are added to ONE eval (`EVAL_NAME`) rather than each creating its own,
+so the portal's Compare view -- side-by-side runs with t-testing -- has
+something to compare. A fresh eval per run makes every run an island.
+
 Usage:  python publish_to_evals_api.py results/ci-7.json
 """
 from __future__ import annotations
@@ -39,9 +43,7 @@ import pathlib
 import sys
 
 import httpx
-from azure.identity import AzureCliCredential
-
-HERE = pathlib.Path(__file__).parent
+from azure.identity import AzureCliCredential, DefaultAzureCredential
 
 # Namespaces to publish. delegation is deterministic (no judge); the rest are
 # LLM-judged. Both end up as the same string_check shape.
@@ -50,7 +52,13 @@ JUDGED = ["intent", "task", "completeness", "coherence", "fluency", "tools"]
 
 def _token() -> str:
     # Audience is ai.azure.com, same as run_eval.py -- NOT cognitiveservices.
-    return AzureCliCredential().get_token("https://ai.azure.com/.default").token
+    #
+    # AzureCliCredential locally (fast, and matches how run_eval.py is driven
+    # by hand); DefaultAzureCredential on a runner, where auth comes from the
+    # OIDC federated login and there is no `az login` session to read.
+    cred = DefaultAzureCredential() if os.environ.get("GITHUB_ACTIONS") \
+        else AzureCliCredential()
+    return cred.get_token("https://ai.azure.com/.default").token
 
 
 def _row_items(rows: list[dict]) -> list[dict]:
@@ -97,6 +105,42 @@ def _row_items(rows: list[dict]) -> list[dict]:
     return items
 
 
+#: Stable container for every CI run. Runs are added to THIS eval so the
+#: portal's Compare view (t-testing across runs) works -- a fresh eval per run
+#: makes each one an island and comparison impossible.
+EVAL_NAME = "ghcp-sdk-browser"
+
+
+def _find_or_create_eval(c: httpx.Client, ep: str, headers: dict,
+                         schema: dict, criteria: list) -> str:
+    """Resolve EVAL_NAME to an eval_id, creating it once if absent.
+
+    Looked up BY NAME rather than stored in a repo variable: the id would be a
+    second source of truth that silently breaks if the eval is ever deleted or
+    recreated, and a CI job cannot repair it. Name lookup self-heals.
+    """
+    r = c.get(f"{ep}/openai/v1/evals", headers=headers)
+    r.raise_for_status()
+    for e in r.json().get("data", []):
+        if e.get("name") == EVAL_NAME:
+            print(f"reusing eval {e['id']} ({EVAL_NAME})")
+            return e["id"]
+
+    r = c.post(f"{ep}/openai/v1/evals", headers=headers, json={
+        "name": EVAL_NAME,
+        "data_source_config": {"type": "custom", "item_schema": schema,
+                               "include_sample_schema": False},
+        "testing_criteria": criteria,
+        "metadata": {"source": "run_eval.py"},
+    })
+    if r.status_code >= 300:
+        print("create eval failed:", r.status_code, r.text[:1200])
+        raise SystemExit(1)
+    eval_id = r.json()["id"]
+    print(f"created eval {eval_id} ({EVAL_NAME})")
+    return eval_id
+
+
 def main() -> None:
     src = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "results/ci-7.json")
     data = json.loads(src.read_text())
@@ -127,19 +171,7 @@ def main() -> None:
     ]
 
     with httpx.Client(timeout=120) as c:
-        r = c.post(f"{ep}/openai/v1/evals", headers=headers, json={
-            "name": f"ghcp-sdk-browser :: {name}",
-            "data_source_config": {"type": "custom", "item_schema": schema,
-                                   "include_sample_schema": False},
-            "testing_criteria": criteria,
-            "metadata": {"source": "run_eval.py", "run": name},
-        })
-        print("create eval:", r.status_code)
-        if r.status_code >= 300:
-            print(r.text[:1200])
-            raise SystemExit(1)
-        eval_id = r.json()["id"]
-        print("eval_id:", eval_id)
+        eval_id = _find_or_create_eval(c, ep, headers, schema, criteria)
 
         r = c.post(f"{ep}/openai/v1/evals/{eval_id}/runs", headers=headers, json={
             "name": name,

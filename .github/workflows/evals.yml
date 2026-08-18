@@ -99,6 +99,10 @@ jobs:
             ARGS="$ARGS --gate"
           fi
 
+          # The publish step needs this to locate results/<name>.json, and it
+          # runs even when the gate fails -- so export before running, not after.
+          echo "EVAL_NAME=$NAME" >> "$GITHUB_ENV"
+
           echo "run_eval.py $ARGS"
           set +e
           python run_eval.py $ARGS
@@ -113,6 +117,20 @@ jobs:
             echo "::error::Eval thresholds breached -- see the job summary."
           fi
           exit $code
+
+      - name: Publish to Foundry portal
+        # always(): a gate failure is exactly when you want the run visible in
+        # the portal. Never fails the job -- publishing is reporting, not a
+        # quality signal, and a portal outage must not mask a green eval.
+        if: always()
+        working-directory: evals
+        continue-on-error: true
+        run: |
+          if [ ! -f "results/$EVAL_NAME.json" ]; then
+            echo "::warning::no results/$EVAL_NAME.json -- nothing to publish"
+            exit 0
+          fi
+          python publish_to_evals_api.py "results/$EVAL_NAME.json"
 
       - name: Upload results
         # always(): the artifact is most valuable precisely when the gate failed.
