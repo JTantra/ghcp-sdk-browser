@@ -44,6 +44,7 @@ import sys
 
 import httpx
 from azure.identity import AzureCliCredential, DefaultAzureCredential
+from dotenv import load_dotenv
 
 # Namespaces to publish. delegation is deterministic (no judge); the rest are
 # LLM-judged. Both end up as the same string_check shape.
@@ -147,6 +148,10 @@ def main() -> None:
     rows = data.get("rows", [])
     name = src.stem
 
+    # Same .env as run_eval.py -- one config source, not two. Without this the
+    # endpoint is only defined for run_eval (which loads .env itself) and this
+    # step dies with KeyError on the runner while the job still reports green.
+    load_dotenv(pathlib.Path(__file__).parent / ".env")
     ep = os.environ["AZURE_AI_PROJECT_ENDPOINT"].rstrip("/")
     headers = {"Authorization": f"Bearer {_token()}",
                "Content-Type": "application/json"}

@@ -130,7 +130,12 @@ jobs:
             echo "::warning::no results/$EVAL_NAME.json -- nothing to publish"
             exit 0
           fi
-          python publish_to_evals_api.py "results/$EVAL_NAME.json"
+          # continue-on-error hides a crash behind a green job, so surface it
+          # as an annotation: the first CI publish died on a missing env var
+          # and the run still reported success.
+          if ! python publish_to_evals_api.py "results/$EVAL_NAME.json"; then
+            echo "::warning::Publishing to the Foundry portal failed -- scores are still in the job summary and the artifact."
+          fi
 
       - name: Upload results
         # always(): the artifact is most valuable precisely when the gate failed.
