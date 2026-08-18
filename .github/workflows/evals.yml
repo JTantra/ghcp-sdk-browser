@@ -14,6 +14,7 @@ name: evals
 #   AZURE_CLIENT_ID        5d06d090-7b72-4a87-a429-6d43e7bac6e7
 #   AZURE_TENANT_ID        92def590-0f4c-43ab-be1e-493d616e2725
 #   AZURE_SUBSCRIPTION_ID  98517cf5-e3e8-4d6e-9e54-a93d702df3d9
+#   AZURE_RESOURCE_GROUP   jtantra-test-rg   (job summary portal link only)
 
 on:
   workflow_dispatch:
@@ -48,6 +49,12 @@ jobs:
     runs-on: ubuntu-latest
     # Full agent turns are slow (~40s/row incl. subagents + browser relay).
     timeout-minutes: 45
+
+    env:
+      # Only used to build the portal link in the job summary. The SDK's own
+      # studio_url hardcodes an AML-workspace provider segment that does not
+      # resolve for a Foundry project -- see _portal_links() in run_eval.py.
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
 
     steps:
       - uses: actions/checkout@v4

@@ -517,12 +517,44 @@ def _write_job_summary(name: str, metrics: dict, result: dict,
             lines += _rationale(r, failed_only=False)
         lines += ["</details>"]
 
-    url = result.get("studio_url")
-    if url:
-        lines += ["", f"[Open in Foundry]({url})"]
+    lines += _portal_links(result)
 
     with open(path, "a", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
+
+
+def _portal_links(result: dict) -> list[str]:
+    """Foundry portal links for the run.
+
+    The SDK's `studio_url` points at `/resource/build/evaluation/<run-id>` and
+    in practice lands on the generic ai.azure.com landing page rather than the
+    run: when the portal cannot resolve that deep link it silently redirects
+    instead of erroring, so a dead link is indistinguishable from a live one.
+    (The `wsid` itself is correct -- CognitiveServices account + project.)
+
+    So: keep the SDK link, and always emit a project-scoped Evaluations-LIST
+    link alongside it. The list view resolves reliably, and the run is findable
+    there by name (`ci-<run_number>` / `pr-<n>-<run_number>`), which is why the
+    eval name is passed through from the workflow.
+    """
+    out: list[str] = []
+    sdk = result.get("studio_url")
+    if sdk:
+        out += ["", f"[Open this run in Foundry]({sdk})"]
+
+    sub = os.environ.get("AZURE_SUBSCRIPTION_ID")
+    rg = os.environ.get("AZURE_RESOURCE_GROUP")
+    ep = os.environ.get("AZURE_AI_PROJECT_ENDPOINT", "")
+    # https://<account>.services.ai.azure.com/api/projects/<project>
+    account = ep.split("//")[-1].split(".")[0] if "//" in ep else ""
+    project = ep.rstrip("/").rsplit("/", 1)[-1] if ep else ""
+    if sub and rg and account and project:
+        wsid = (f"/subscriptions/{sub}/resourceGroups/{rg}/providers/"
+                f"Microsoft.CognitiveServices/accounts/{account}/projects/{project}")
+        out.append("[All evaluations for this project]"
+                   f"(https://ai.azure.com/build/evaluation?wsid={wsid})"
+                   "  ← find this run by the name in the heading above")
+    return out
 
 
 if __name__ == "__main__":
