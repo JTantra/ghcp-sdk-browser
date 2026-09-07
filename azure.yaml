@@ -40,4 +40,4 @@ services:
               version: 1.0.0
     jtantra-test-foundry:
         host: azure.ai.project
-        endpoint: https://jtantra-test-foundry.services.ai.azure.com/api/projects/jtantra-test-foundry
+        endpoint: ${FOUNDRY_PROJECT_ENDPOINT}

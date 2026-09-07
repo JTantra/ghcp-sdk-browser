@@ -18,3 +18,8 @@ demo-app/
 docs/
 *.md
 server/.env
+**/.copilot/
+**/.env
+**/.env.*
+evals/.venv/
+evals/results/

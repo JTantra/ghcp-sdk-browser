@@ -1,0 +1,23 @@
+{
+  "$comment": [
+    "Floors for `run_eval.py --gate`. Set at MEASURED baseline-v3 values, not",
+    "aspirations: a gate that never passes gets ignored, and one set above",
+    "reality blocks every PR on day one. Raise them as the agent improves.",
+    "",
+    "tools.binary_aggregate is deliberately ABSENT. Undeclared SDK tools",
+    "(read_agent, bash, view) are counted as calls to undefined tools, so the",
+    "metric is not yet trustworthy. Add it once tool_definitions.json covers",
+    "them or the harness filters them.",
+    "",
+    "fluency/coherence are style metrics and move with judge sampling; they are",
+    "informational only. delegation_* are deterministic, so they are the",
+    "strictest gates here."
+  ],
+
+  "delegation.delegation_recall": 0.70,
+  "delegation.delegation_order_ok": 1.00,
+
+  "intent.binary_aggregate": 0.70,
+  "task.binary_aggregate": 0.80,
+  "completeness.binary_aggregate": 0.80
+}

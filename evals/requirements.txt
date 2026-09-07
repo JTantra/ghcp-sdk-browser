@@ -1,0 +1,4 @@
+httpx>=0.27
+azure-identity>=1.19
+azure-ai-evaluation>=1.18
+python-dotenv>=1.0
