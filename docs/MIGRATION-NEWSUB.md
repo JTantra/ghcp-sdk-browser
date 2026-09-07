@@ -62,10 +62,11 @@ azd and az have separate auth. This migration temporarily used `azd config set a
 ## Not migrated / not yet verified
 
 - Browser interactive sign-in and end-to-end browser execution: operator cutover above remains.
-- GitHub Actions: configured dedicated `ghcp-sdk-browser-evals` identity with account-scoped Azure AI Developer and Cognitive Services OpenAI User roles. `NEWSUB_*` repo variables isolate the new workflow from the old master configuration. Full runner verification is pending. The CI client is separate from the extension SPA registration.
+- GitHub Actions: verified full gated run [ci-16](https://github.com/JTantra/ghcp-sdk-browser/actions/runs/34137016306), commit `416bbb1`, against the new project. All 10 cases produced responses; zero harness errors; all five aggregate CI gates passed. The dedicated `ghcp-sdk-browser-evals` identity has account-scoped Azure AI Developer and Cognitive Services OpenAI User, plus project-scoped **Foundry Agent Consumer** for endpoint interaction. The first run failed with 403 because neither older role includes `AIServices/endpoints/interact/action`; do not treat that run's empty-response scores as quality results. `NEWSUB_*` repo variables leave the old master configuration untouched. Changes are on `feat/foundry-evals`, not merged to master. The CI client is separate from the extension SPA registration.
+- Foundry publishing: `evalrun_a1f201de4a954139bfff27089ce7a83c` under `eval_0351ecdee9204234be4c964152d72a20` was read back as completed with 10 results (6 passed, 4 failed, 0 errored). This per-row roll-up differs from the aggregate CI gate. Existing evaluator conversation/response parsing-fallback warnings remain; do not describe this run as every metric passing.
 - Existing test/telemetry/publishing helpers contain old hardcoded defaults; supply explicit target configuration or update each helper before using it. In particular, `scripts/publish_skills.py` defaults to the old project and obtains its token from the current az subscription.
 - Historical sessions, chats, evaluations and trace history: not copied.
-- End-to-end subagent evaluation suite and portal trace correlation: not rerun.
+- Subagent evaluation suite: rerun in GitHub Actions (above). Portal trace correlation is still unverified.
 - No source resources, agents, app registrations, or skills were deleted.
 
 ## Rollback
