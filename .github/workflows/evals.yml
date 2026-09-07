@@ -2,19 +2,15 @@ name: evals
 
 # Batch evaluation of the deployed ghcp-sdk-browser agent.
 #
-# Auth is OIDC -- no secrets in the repo. The federated credentials live on the
-# `jh-cobra-github-actions` app registration and are bound to THIS repo:
-#   ghcp-evals-master  repo:JTantra/ghcp-sdk-browser:ref:refs/heads/master
-#   ghcp-evals-pr      repo:JTantra/ghcp-sdk-browser:pull_request
-#   ghcp-evals-env     repo:JTantra/ghcp-sdk-browser:environment:evals
-# GitHub sends a DIFFERENT subject per trigger, and a credential only matches
-# its exact subject -- hence three, not one.
-#
-# Repo variables required (Settings > Secrets and variables > Actions > Variables):
-#   AZURE_CLIENT_ID        5d06d090-7b72-4a87-a429-6d43e7bac6e7
-#   AZURE_TENANT_ID        92def590-0f4c-43ab-be1e-493d616e2725
-#   AZURE_SUBSCRIPTION_ID  98517cf5-e3e8-4d6e-9e54-a93d702df3d9
-#   AZURE_RESOURCE_GROUP   jtantra-test-rg   (job summary portal link only)
+# OIDC app: ghcp-sdk-browser-evals in the new ASEANInnovationHub tenant.
+# Federated subjects must match the repository's actual OIDC sub_claim_prefix
+# (including immutable owner/repo IDs), plus the branch or pull_request suffix.
+# NEWSUB_* variables isolate this migration from master's old-tenant workflow.
+# Required repo variables:
+#   NEWSUB_AZURE_CLIENT_ID, NEWSUB_AZURE_TENANT_ID, NEWSUB_AZURE_SUBSCRIPTION_ID
+#   NEWSUB_PROJECT_ENDPOINT, NEWSUB_AGENT_BASE_URL, NEWSUB_JUDGE_ENDPOINT
+#   AZURE_RESOURCE_GROUP (job summary portal link only)
+# No agent deployment happens in this workflow.
 
 on:
   workflow_dispatch:
@@ -51,10 +47,12 @@ jobs:
     timeout-minutes: 45
 
     env:
-      # Only used to build the portal link in the job summary. The SDK's own
-      # studio_url hardcodes an AML-workspace provider segment that does not
-      # resolve for a Foundry project -- see _portal_links() in run_eval.py.
+      # Explicit runtime overrides win over the local .env example.
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.NEWSUB_AZURE_SUBSCRIPTION_ID }}
+      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.NEWSUB_PROJECT_ENDPOINT }}
+      AGENT_BASE_URL: ${{ vars.NEWSUB_AGENT_BASE_URL }}
+      JUDGE_ENDPOINT: ${{ vars.NEWSUB_JUDGE_ENDPOINT }}
 
     steps:
       - uses: actions/checkout@v4
@@ -66,9 +64,9 @@ jobs:
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ vars.NEWSUB_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.NEWSUB_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.NEWSUB_AZURE_SUBSCRIPTION_ID }}
 
       - name: Install deps
         working-directory: evals
@@ -78,7 +76,15 @@ jobs:
 
       - name: Configure
         working-directory: evals
-        run: cp judge_model.env.example .env
+        run: |
+          test -n "$AZURE_AI_PROJECT_ENDPOINT"
+          test -n "$AGENT_BASE_URL"
+          test -n "$JUDGE_ENDPOINT"
+          test "$(az account show --query id -o tsv)" = "$AZURE_SUBSCRIPTION_ID"
+          echo "Foundry project: $AZURE_AI_PROJECT_ENDPOINT"
+          echo "Agent under test: $AGENT_BASE_URL"
+          echo "Judge endpoint: $JUDGE_ENDPOINT"
+          cp judge_model.env.example .env
 
       - name: Run evaluation
         working-directory: evals

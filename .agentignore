@@ -15,6 +15,7 @@ azure.yaml
 .env.*
 .azure/
 .git/
+**/.copilot/
 
 # Python
 __pycache__/

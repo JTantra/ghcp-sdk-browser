@@ -48,8 +48,8 @@ async function makePkcePair(): Promise<{ verifier: string; challenge: string }> 
 }
 
 /** Entra app registration `ghcp-sdk-browser-extension` in the sandbox tenant. */
-const DEFAULT_CLIENT_ID = "509df672-ebb9-4ab5-91d6-5c19996313c1";
-const DEFAULT_TENANT_ID = "92def590-0f4c-43ab-be1e-493d616e2725";
+const DEFAULT_CLIENT_ID = "cc1880a7-aa8d-49fd-8536-e3042a2fd146";
+const DEFAULT_TENANT_ID = "2270b307-46e9-4e9a-8b44-353d5523f75f";
 
 export async function getAuthConfig(): Promise<AuthConfig> {
   const s = await chrome.storage.local.get(["clientId", "tenantId"]);

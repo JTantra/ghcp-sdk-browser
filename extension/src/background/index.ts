@@ -30,11 +30,11 @@ import type { PanelMsg, ServerMsg } from "../shared/protocol";
  * POST and the prompt POST all multiplex over this single URL by `mode`.
  */
 const DEFAULT_BACKEND =
-  "https://jtantra-test-foundry.services.ai.azure.com/api/projects/jtantra-test-foundry" +
+  "https://jtantra-test-foundry2.services.ai.azure.com/api/projects/jtantra-test-foundry2" +
   "/agents/ghcp-sdk-browser/endpoint/protocols/invocations?api-version=v1";
 /** Entra app registration `ghcp-sdk-browser-extension`. */
-const DEFAULT_CLIENT_ID = "509df672-ebb9-4ab5-91d6-5c19996313c1";
-const DEFAULT_TENANT_ID = "92def590-0f4c-43ab-be1e-493d616e2725";
+const DEFAULT_CLIENT_ID = "cc1880a7-aa8d-49fd-8536-e3042a2fd146";
+const DEFAULT_TENANT_ID = "2270b307-46e9-4e9a-8b44-353d5523f75f";
 /** Local dev fallback: `python -m app.main` then paste this into the panel. */
 const LOCAL_BACKEND = "http://127.0.0.1:8088/invocations";
 
